@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.PhotoClarityAI" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+    <style name="Theme.PhotoClarityAI.SplashScreen" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#13131B</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.PhotoClarityAI</item>
+    </style>
+</resources>

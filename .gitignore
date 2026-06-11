@@ -1,0 +1,28 @@
+# Android için .gitignore
+
+# Gradle önbelleği
+.gradle/
+build/
+app/build/
+
+# IDE dosyaları
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Local properties (SDK yolu - bilgisayara özel)
+local.properties
+
+# OS dosyaları
+.DS_Store
+Thumbs.db
+
+# Proguard
+proguard/
+
+# Android Studio Navigation editor
+.navigation/
+
+# Kotlin
+*.class

@@ -1,0 +1,3 @@
+-keep class com.photoclarity.ai.** { *; }
+-keepattributes Signature
+-keepattributes *Annotation*
