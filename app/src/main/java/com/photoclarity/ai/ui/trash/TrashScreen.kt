@@ -1,5 +1,8 @@
 package com.photoclarity.ai.ui.trash
 
+import android.os.Build
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -26,7 +29,7 @@ fun TrashScreen(onBack: () -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("Geri Dönüşüm Kutusu", fontWeight = FontWeight.Bold) },
+                title = { Text("Sistem Çöp Kutusu Bilgisi", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, "Geri")
@@ -42,6 +45,7 @@ fun TrashScreen(onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp)
@@ -65,12 +69,14 @@ fun TrashScreen(onBack: () -> Unit) {
             }
 
             Text(
-                "Geri Dönüşüm Kutusu",
+                "Sistem Çöp Kutusu Bilgisi",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.ExtraBold
             )
             Text(
-                "Silinen fotoğraflar 30 gün boyunca burada saklanır ve bu süre içinde geri yüklenebilir.",
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+                    "PhotoClarityAI kendi çöp kutusunu tutmaz. Onayladığınız fotoğraflar cihazın sistem çöp kutusuna taşınır."
+                else "Bu Android sürümünde sistem çöp kutusu kullanılamıyor. Onayladığınız silme işlemleri kalıcıdır ve geri alınamaz.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
@@ -88,9 +94,9 @@ fun TrashScreen(onBack: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text("Şu An Geçerli Davranış", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    InfoRow(Icons.Default.Warning, "PhotoClarity silme işlemleri Android MediaStore üzerinden gerçekleşir")
-                    InfoRow(Icons.Default.Android, "Android'in kendi Geri Dönüşüm Kutusu özelliği aktif olarak çalışır")
-                    InfoRow(Icons.Default.Undo, "Uygulama içi geri yükleme yakında eklenecek")
+                    InfoRow(Icons.Default.Warning, "Her işlemden önce seçilen fotoğrafları kontrol edin ve açıkça onaylayın.")
+                    InfoRow(Icons.Default.Android, "Android 11 ve üzerinde taşıma için ayrıca sistem onayı gerekir. Sistem isteği başarısız olursa kalıcı silmeye geçilmez.")
+                    InfoRow(Icons.Default.Undo, "Geri yükleme, saklama süresi ve kalıcı silme cihazın sistem veya galeri uygulaması tarafından yönetilir.")
                 }
             }
 
@@ -105,7 +111,7 @@ fun TrashScreen(onBack: () -> Unit) {
                 ) {
                     Icon(Icons.Default.Schedule, null, tint = DeleteRed, modifier = Modifier.size(16.dp))
                     Text(
-                        "Uygulama İçi Geri Dönüşüm — Yakında",
+                        "Saklama süresi veya geri yükleme garantisi verilmez",
                         style = MaterialTheme.typography.labelMedium,
                         color = DeleteRed,
                         fontWeight = FontWeight.Bold

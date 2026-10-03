@@ -30,6 +30,7 @@ fun PhotoGroupCard(
     selectedPhotoIds: Set<Long>,
     onPhotoSelectionChanged: (Long, Boolean) -> Unit,
     qualityScorer: QualityScorer,
+    selectionEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -41,6 +42,10 @@ fun PhotoGroupCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
+            if (group.groupType == DuplicateGroup.GroupType.LOW_QUALITY) {
+                Text("Netlik önerisi; benzerlik veya silme önerisi değildir. Galerinizde inceleyin.",
+                    style = MaterialTheme.typography.bodyMedium)
+            }
             // Group photos
             group.photos.forEachIndexed { index, photo ->
                 val isSelected = photo.id in selectedPhotoIds
@@ -51,6 +56,8 @@ fun PhotoGroupCard(
                     isSelected = isSelected,
                     isRecommended = isRecommended,
                     qualityScorer = qualityScorer,
+                    selectionEnabled = selectionEnabled && !isRecommended &&
+                        group.recommendedPhoto != null && group.groupType != DuplicateGroup.GroupType.LOW_QUALITY,
                     onSelectionChanged = { selected ->
                         onPhotoSelectionChanged(photo.id, selected)
                     }
@@ -76,6 +83,7 @@ fun PhotoCard(
     isRecommended: Boolean,
     qualityScorer: QualityScorer,
     onSelectionChanged: (Boolean) -> Unit,
+    selectionEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val borderColor = when {
@@ -93,7 +101,7 @@ fun PhotoCard(
                 color = borderColor,
                 shape = RoundedCornerShape(12.dp)
             )
-            .clickable { onSelectionChanged(!isSelected) }
+            .clickable(enabled = selectionEnabled) { onSelectionChanged(!isSelected) }
             .background(MaterialTheme.colorScheme.surfaceContainerHigh)
     ) {
         Column {
@@ -144,7 +152,7 @@ fun PhotoCard(
                                 modifier = Modifier.size(12.dp)
                             )
                             Text(
-                                "Önerilen",
+                                "Korunacak",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold
@@ -159,7 +167,7 @@ fun PhotoCard(
                         .padding(8.dp)
                         .align(Alignment.TopEnd)
                 ) {
-                    AnimatedCheckbox(
+                    if (selectionEnabled) AnimatedCheckbox(
                         checked = isSelected,
                         onCheckedChange = onSelectionChanged
                     )

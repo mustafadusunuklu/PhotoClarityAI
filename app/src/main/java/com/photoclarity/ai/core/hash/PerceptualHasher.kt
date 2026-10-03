@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import com.photoclarity.ai.core.util.BitmapUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -47,31 +48,31 @@ class PerceptualHasher @Inject constructor(
     suspend fun computePHash(uri: Uri): Long? = withContext(Dispatchers.Default) {
         runCatching {
             val bitmap = bitmapUtils.decodeSampledBitmap(uri, RESIZE_DIM, RESIZE_DIM) ?: return@runCatching null
-            val grayscale = toGrayscaleMatrix(bitmap)
-            bitmap.recycle()
+            val grayscale = try { toGrayscaleMatrix(bitmap) } finally { bitmap.recycle() }
 
             val dct = applyDct(grayscale)
             val lowFreq = extractLowFrequency(dct)
             val median = computeMedian(lowFreq)
 
             buildHash(lowFreq, median)
-        }.getOrNull()
+        }.getOrElse { if (it is CancellationException) throw it else null }
     }
 
     private fun toGrayscaleMatrix(bitmap: Bitmap): Array<DoubleArray> {
         val resized = Bitmap.createScaledBitmap(bitmap, RESIZE_DIM, RESIZE_DIM, true)
-        val matrix = Array(RESIZE_DIM) { DoubleArray(RESIZE_DIM) }
-        for (y in 0 until RESIZE_DIM) {
-            for (x in 0 until RESIZE_DIM) {
-                val pixel = resized.getPixel(x, y)
-                // Luminance: ITU-R BT.601
-                matrix[y][x] = 0.299 * Color.red(pixel) +
-                        0.587 * Color.green(pixel) +
-                        0.114 * Color.blue(pixel)
+        try {
+            val matrix = Array(RESIZE_DIM) { DoubleArray(RESIZE_DIM) }
+            for (y in 0 until RESIZE_DIM) {
+                for (x in 0 until RESIZE_DIM) {
+                    val pixel = resized.getPixel(x, y)
+                    // Luminance: ITU-R BT.601
+                    matrix[y][x] = 0.299 * Color.red(pixel) +
+                            0.587 * Color.green(pixel) +
+                            0.114 * Color.blue(pixel)
+                }
             }
-        }
-        if (resized != bitmap) resized.recycle()
-        return matrix
+            return matrix
+        } finally { if (resized !== bitmap) resized.recycle() }
     }
 
     private fun applyDct(matrix: Array<DoubleArray>): Array<DoubleArray> {

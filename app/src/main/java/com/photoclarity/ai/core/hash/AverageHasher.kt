@@ -3,6 +3,7 @@ package com.photoclarity.ai.core.hash
 import android.graphics.Color
 import android.net.Uri
 import com.photoclarity.ai.core.util.BitmapUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -31,23 +32,31 @@ class AverageHasher @Inject constructor(
     suspend fun computeAHash(uri: Uri): Long? = withContext(Dispatchers.Default) {
         runCatching {
             val bitmap = bitmapUtils.decodeSampledBitmap(uri, SIZE, SIZE) ?: return@runCatching null
-            val scaled = android.graphics.Bitmap.createScaledBitmap(bitmap, SIZE, SIZE, true)
-            bitmap.recycle()
-
-            val pixels = IntArray(SIZE * SIZE)
-            scaled.getPixels(pixels, 0, SIZE, 0, 0, SIZE, SIZE)
-            scaled.recycle()
-
-            val grays = pixels.map { p ->
-                0.299 * Color.red(p) + 0.587 * Color.green(p) + 0.114 * Color.blue(p)
+            val scaled = try {
+                android.graphics.Bitmap.createScaledBitmap(bitmap, SIZE, SIZE, true)
+            } catch (e: Exception) {
+                bitmap.recycle()
+                throw e
             }
-            val mean = grays.average()
+            try {
+                val pixels = IntArray(SIZE * SIZE)
+                scaled.getPixels(pixels, 0, SIZE, 0, 0, SIZE, SIZE)
 
-            var hash = 0L
-            grays.forEachIndexed { i, v ->
-                if (v > mean) hash = hash or (1L shl i)
+
+                val grays = pixels.map { p ->
+                    0.299 * Color.red(p) + 0.587 * Color.green(p) + 0.114 * Color.blue(p)
+                }
+                val mean = grays.average()
+
+                var hash = 0L
+                grays.forEachIndexed { i, v ->
+                    if (v > mean) hash = hash or (1L shl i)
+                }
+                hash
+            } finally {
+                if (scaled !== bitmap) scaled.recycle()
+                bitmap.recycle()
             }
-            hash
-        }.getOrNull()
+        }.getOrElse { if (it is CancellationException) throw it else null }
     }
 }

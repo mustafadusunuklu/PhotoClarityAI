@@ -55,6 +55,7 @@ class QualityScorer @Inject constructor() {
      * Determine quality label for display (e.g., "Net Odak", "Bulanık").
      */
     fun qualityLabel(photo: Photo): String {
+        if (photo.sharpnessScore < 0f) return "Netlik ölçülemedi"
         val sharpNorm = (photo.sharpnessScore / MAX_SHARPNESS).coerceIn(0f, 1f)
         return when {
             sharpNorm >= 0.6f -> "Net Odak"

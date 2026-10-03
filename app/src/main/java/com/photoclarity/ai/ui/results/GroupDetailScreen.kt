@@ -68,7 +68,7 @@ fun GroupDetailScreen(
                 modifier = Modifier.padding(bottom = 16.dp)
             ) {
                 Text(
-                    text = "Benzerlik: %$similarityPercent | ${group.groupType.name.replace("_", " ")}",
+                    text = if (group.groupType == com.photoclarity.ai.domain.model.DuplicateGroup.GroupType.LOW_QUALITY) "Tekil netlik önerisi — benzerlik veya silme önerisi değil" else "Benzerlik: %$similarityPercent | ${group.groupType.name.replace("_", " ")}",
                     style = MaterialTheme.typography.labelMedium,
                     color = Secondary,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -96,7 +96,7 @@ fun GroupDetailScreen(
                     Column(modifier = Modifier.padding(12.dp)) {
                         if (isRecommended) {
                             Text(
-                                text = "⭐ Önerilen – Sakla",
+                                text = "⭐ Korunacak – Silme seçimi kapalı",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = Secondary,
                                 fontWeight = FontWeight.Bold,

@@ -1,6 +1,7 @@
 package com.photoclarity.ai.ui.results
 
 import android.content.IntentSender
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.photoclarity.ai.core.analysis.QualityScorer
@@ -10,32 +11,35 @@ import com.photoclarity.ai.domain.repository.PhotoRepository
 import com.photoclarity.ai.domain.repository.SettingsRepository
 import com.photoclarity.ai.ui.scan.ScanResultHolder
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+private fun sizeLabel(bytes: Long): String = when {
+    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+    bytes < 1024L * 1024L * 1024L -> "%.1f MB".format(bytes / (1024f * 1024f))
+    else -> "%.1f GB".format(bytes / (1024f * 1024f * 1024f))
+}
 
 data class ResultsUiState(
     val groups: List<DuplicateGroup> = emptyList(),
     val selectedPhotoIds: Set<Long> = emptySet(),
     val isLoading: Boolean = false,
     val error: String? = null,
+    val message: String? = null,
     val pendingDeleteIntentSender: IntentSender? = null,
-    val lastDeletedCount: Int = 0
+    val lastDeletedCount: Int = 0,
+    val removalMode: PhotoRepository.RemovalMode = PhotoRepository.RemovalMode.PERMANENT_DELETE,
+    val waitingForLegacyWritePermission: Boolean = false,
+    val confirmationPhotos: List<Photo>? = null
 ) {
-    val selectedPhotoCount: Int get() = selectedPhotoIds.size
-    val selectedSizeLabel: String get() {
-        val bytes = groups
-            .flatMap { it.photos }
-            .filter { it.id in selectedPhotoIds }
-            .sumOf { it.sizeBytes }
-        return when {
-            bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-            bytes < 1024L * 1024L * 1024L -> "%.1f MB".format(bytes / (1024f * 1024f))
-            else -> "%.1f GB".format(bytes / (1024f * 1024f * 1024f))
-        }
-    }
+    val selectedPhotoCount get() = selectedPhotoIds.size
+    val selectedSizeLabel get() = sizeLabel(groups.flatMap { it.photos }
+        .distinctBy { it.id }.filter { it.id in selectedPhotoIds }.sumOf { it.sizeBytes })
+    val confirmationSizeLabel get() = sizeLabel(confirmationPhotos.orEmpty().sumOf { it.sizeBytes })
+    val selectionLocked get() = isLoading || confirmationPhotos != null
 }
 
 @HiltViewModel
@@ -44,94 +48,168 @@ class ResultsViewModel @Inject constructor(
     private val settingsRepository: SettingsRepository,
     val qualityScorer: QualityScorer
 ) : ViewModel() {
+    private val _uiState = MutableStateFlow(ResultsUiState(
+        groups = ScanResultHolder.groups, removalMode = photoRepository.removalMode))
+    val uiState = _uiState.asStateFlow()
+    private var snapshot: List<Photo>? = null
+    private var pending: PhotoRepository.DeleteResult.RequiresPermission? = null
+    private val completed = mutableSetOf<Uri>()
+    private val failures = mutableSetOf<Uri>()
+    private val grantedRetries = mutableSetOf<Uri>()
 
-    private val _uiState = MutableStateFlow(ResultsUiState())
-    val uiState: StateFlow<ResultsUiState> = _uiState.asStateFlow()
-
-    init {
-        loadResults()
-    }
-
-    private fun loadResults() {
-        val groups = ScanResultHolder.groups
-        _uiState.value = _uiState.value.copy(groups = groups)
+    private fun selectableIds(): Set<Long> {
+        val protected = _uiState.value.groups.map { it.recommendedKeepId }.toSet()
+        return _uiState.value.groups.filter {
+            it.groupType != DuplicateGroup.GroupType.LOW_QUALITY &&
+                it.photos.size >= 2 && it.recommendedPhoto != null
+        }.flatMap { it.photos }.filter { it.id !in protected }.map { it.id }.toSet()
     }
 
     fun togglePhotoSelection(photoId: Long, selected: Boolean) {
-        val current = _uiState.value.selectedPhotoIds.toMutableSet()
-        if (selected) current.add(photoId) else current.remove(photoId)
-        _uiState.value = _uiState.value.copy(selectedPhotoIds = current)
+        if (_uiState.value.selectionLocked) return
+        if (selected && photoId !in selectableIds()) {
+            _uiState.value = _uiState.value.copy(error = "Korunacak fotoğraf ve tekil kalite önerileri silme için seçilemez.")
+            return
+        }
+        val ids = _uiState.value.selectedPhotoIds
+        _uiState.value = _uiState.value.copy(selectedPhotoIds = if (selected) ids + photoId else ids - photoId)
     }
 
     fun smartSelectAll() {
-        // For each group, select all photos EXCEPT the recommended one
-        val toSelect = _uiState.value.groups.flatMap { group ->
-            group.photos
-                .filter { it.id != group.recommendedKeepId }
-                .map { it.id }
-        }.toSet()
-        _uiState.value = _uiState.value.copy(selectedPhotoIds = toSelect)
+        if (_uiState.value.selectionLocked) return
+        _uiState.value = _uiState.value.copy(selectedPhotoIds = selectableIds())
     }
 
+    fun requestDeleteConfirmation() {
+        if (_uiState.value.selectionLocked) return
+        val ids = _uiState.value.selectedPhotoIds.intersect(selectableIds())
+        val photos = _uiState.value.groups.flatMap { it.photos }.distinctBy { it.id }
+            .filter { it.id in ids }.toList()
+        if (photos.isNotEmpty()) _uiState.value = _uiState.value.copy(
+            confirmationPhotos = photos, error = null, message = null)
+    }
+
+    fun dismissDeleteConfirmation() {
+        if (!_uiState.value.isLoading) _uiState.value = _uiState.value.copy(confirmationPhotos = null)
+    }
+
+    fun onLegacyWritePermissionRequested() {
+        if (_uiState.value.confirmationPhotos != null && !_uiState.value.isLoading) {
+            _uiState.value = _uiState.value.copy(waitingForLegacyWritePermission = true)
+        }
+    }
+
+    fun onLegacyWritePermissionResult(granted: Boolean) {
+        if (!_uiState.value.waitingForLegacyWritePermission) return
+        _uiState.value = _uiState.value.copy(waitingForLegacyWritePermission = false)
+        if (granted) deleteSelectedPhotos() else {
+            _uiState.value = _uiState.value.copy(confirmationPhotos = null,
+                error = "Silme izni verilmedi; fotoğraflar silinmedi.")
+        }
+    }
+
+    // Must be preceded by explicit app confirmation; the frozen dialog selection is the transaction.
     fun deleteSelectedPhotos() {
-        viewModelScope.launch {
-            val selectedIds = _uiState.value.selectedPhotoIds
-            val urisToDelete = _uiState.value.groups
-                .flatMap { it.photos }
-                .filter { it.id in selectedIds }
-                .map { it.contentUri }
+        if (_uiState.value.isLoading) return
+        val photos = _uiState.value.confirmationPhotos ?: return
+        snapshot = photos.toList()
+        completed.clear(); failures.clear(); grantedRetries.clear()
+        _uiState.value = _uiState.value.copy(isLoading = true, confirmationPhotos = null,
+            lastDeletedCount = 0, error = null, message = null)
+        viewModelScope.launch { runRemoval(photos.map { it.contentUri }) }
+    }
 
-            val totalBytes = _uiState.value.groups
-                .flatMap { it.photos }
-                .filter { it.id in selectedIds }
-                .sumOf { it.sizeBytes }
-
-            when (val result = photoRepository.deletePhotos(urisToDelete)) {
+    private suspend fun runRemoval(uris: List<Uri>) {
+        try {
+            when (val result = photoRepository.deletePhotos(uris.toList())) {
                 is PhotoRepository.DeleteResult.Success -> {
-                    settingsRepository.addCleanedBytes(totalBytes)
-                    val deletedCount = result.deletedCount
-                    // Remove deleted photos from groups
-                    val updatedGroups = _uiState.value.groups
-                        .map { group ->
-                            group.copy(photos = group.photos.filter { it.id !in selectedIds })
-                        }
-                        .filter { it.photos.size >= 2 }
-                    _uiState.value = _uiState.value.copy(
-                        groups = updatedGroups,
-                        selectedPhotoIds = emptySet(),
-                        lastDeletedCount = deletedCount
-                    )
-                    ScanResultHolder.groups = updatedGroups
+                    completed.addAll(result.removedUris); failures.addAll(result.failedUris)
+                    finish()
                 }
                 is PhotoRepository.DeleteResult.RequiresPermission -> {
-                    _uiState.value = _uiState.value.copy(
-                        pendingDeleteIntentSender = result.intentSender
-                    )
+                    completed.addAll(result.removedUris); failures.addAll(result.failedUris)
+                    if (result.retryUris.firstOrNull() in grantedRetries) {
+                        failures.addAll(result.retryUris)
+                        finish("Sistem izni sonrasında silme tamamlanamadı.")
+                    } else {
+                        pending = result.copy(retryUris = result.retryUris.toList())
+                        _uiState.value = _uiState.value.copy(pendingDeleteIntentSender = result.intentSender)
+                    }
                 }
-                is PhotoRepository.DeleteResult.Error -> {
-                    _uiState.value = _uiState.value.copy(error = result.message)
-                }
+                is PhotoRepository.DeleteResult.Error -> finish(result.message)
+            }
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { finish("İşlem tamamlanamadı. Sonuçları yeniden tarayarak kontrol edin.") }
+    }
+
+    fun onDeletePromptLaunched() {
+        _uiState.value = _uiState.value.copy(pendingDeleteIntentSender = null)
+    }
+
+    fun onDeletePromptFailed() {
+        if (snapshot == null) return
+        pending = null
+        viewModelScope.launch { finish("Sistem onay ekranı açılamadı.") }
+    }
+
+    fun onDeleteResult(approved: Boolean) {
+        val request = pending ?: return
+        pending = null // Repeated callbacks cannot apply a transaction twice.
+        _uiState.value = _uiState.value.copy(pendingDeleteIntentSender = null)
+        viewModelScope.launch {
+            if (!approved) {
+                finish("İşlem iptal edildi. Tamamlanmayan fotoğraflar sonuçlarda korundu.")
+            } else if (request.retryUris.isNotEmpty()) {
+                grantedRetries.add(request.retryUris.first())
+                runRemoval(request.retryUris)
+            } else {
+                try {
+                    val verified = photoRepository.verifyTrashedPhotos(snapshot.orEmpty().map { it.contentUri })
+                    completed.addAll(verified.removedUris); failures.addAll(verified.failedUris)
+                    finish()
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { finish("Çöp kutusuna taşıma doğrulanamadı. Yeniden tarayın.") }
             }
         }
     }
 
-    fun onDeleteConfirmed() {
-        // After system dialog confirmed on Android 11+
-        val selectedIds = _uiState.value.selectedPhotoIds
-        val updatedGroups = _uiState.value.groups
-            .map { group ->
-                group.copy(photos = group.photos.filter { it.id !in selectedIds })
+    private suspend fun finish(error: String? = null) {
+        val photos = snapshot ?: return
+        val removed = photos.filter { it.contentUri in completed }
+        val removedIds = removed.map { it.id }.toSet()
+        val updated = _uiState.value.groups.mapNotNull { group ->
+            val remaining = group.photos.filter { it.id !in removedIds }
+            if (group.groupType == DuplicateGroup.GroupType.LOW_QUALITY) {
+                group.takeIf { remaining.isNotEmpty() }
+            } else if (remaining.size < 2) null else {
+                val keeper = remaining.firstOrNull { it.id == group.recommendedKeepId }
+                    ?: qualityScorer.selectBest(remaining)
+                group.copy(photos = remaining, recommendedKeepId = keeper.id,
+                    totalWasteBytes = remaining.filter { it.id != keeper.id }.sumOf { it.sizeBytes })
             }
-            .filter { it.photos.size >= 2 }
-        _uiState.value = _uiState.value.copy(
-            groups = updatedGroups,
-            selectedPhotoIds = emptySet(),
-            pendingDeleteIntentSender = null,
-            lastDeletedCount = selectedIds.size
-        )
-        ScanResultHolder.groups = updatedGroups
+        }
+        val incomplete = photos.size - removed.size
+        val status = if (removed.isEmpty()) null else if (_uiState.value.removalMode == PhotoRepository.RemovalMode.SYSTEM_TRASH)
+            "${removed.size} fotoğraf cihazın sistem çöp kutusuna taşındı. Geri yüklemeyi sistem veya galeri uygulaması yönetir."
+        else "${removed.size} fotoğraf kalıcı olarak silindi."
+        snapshot = null; pending = null
+        ScanResultHolder.groups = updated
+        _uiState.value = _uiState.value.copy(groups = updated,
+            selectedPhotoIds = (_uiState.value.selectedPhotoIds - removedIds).intersect(
+                updated.flatMap { it.photos }.map { it.id }.toSet()),
+            isLoading = true, pendingDeleteIntentSender = null, lastDeletedCount = removed.size,
+            message = status, error = error ?: if (incomplete > 0)
+                "$incomplete fotoğraf için işlem doğrulanamadı; bu fotoğraflar silinmiş kabul edilmedi." else null)
+        // Trashed bytes are still on the device. Do not claim reclaimed space for them.
+        if (removed.isNotEmpty() && _uiState.value.removalMode == PhotoRepository.RemovalMode.PERMANENT_DELETE) {
+            try { settingsRepository.addCleanedBytes(removed.sumOf { it.sizeBytes }) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = "İşlem tamamlandı ancak alan istatistiği kaydedilemedi.")
+            }
+        }
+        _uiState.value = _uiState.value.copy(isLoading = false)
     }
 
-    fun getGroupById(groupId: String): DuplicateGroup? =
-        _uiState.value.groups.firstOrNull { it.id == groupId }
+    fun getGroupById(groupId: String): DuplicateGroup? = _uiState.value.groups.firstOrNull { it.id == groupId }
 }

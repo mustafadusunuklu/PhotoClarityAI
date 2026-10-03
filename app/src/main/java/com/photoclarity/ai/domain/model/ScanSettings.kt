@@ -17,5 +17,7 @@ data class ScanSettings(
     val selectedFolders: Set<String> = emptySet(),  // empty = all folders
     val minFileSizeBytes: Long = 10 * 1024,          // skip thumbnails < 10KB
 ) {
+    // Preserve existing preferences: crypto choices use pHash for the independent visual stage.
+    val visualHashAlgorithm: HashAlgorithm get() = hashAlgorithm.takeIf { it.isPerceptual } ?: HashAlgorithm.PHASH
     val similarityPercent: Int get() = (similarityThreshold * 100).toInt()
 }

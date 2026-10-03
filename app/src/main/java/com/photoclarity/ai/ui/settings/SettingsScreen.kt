@@ -62,6 +62,9 @@ fun SettingsScreen(
                 }
             }
 
+            Text("Görsel algoritma seçiliyken birebir kontrol MD5 kullanır. MD5/SHA-256 seçiliyken görsel kontrol pHash kullanır. Hash analizi makine öğrenmesi değildir.",
+                style = MaterialTheme.typography.bodySmall)
+
             // ─── Similarity Threshold ─────────────────────────────────────────
             SettingsSection(title = "Benzerlik Eşiği", icon = Icons.Default.Tune) {
                 Column {
@@ -113,17 +116,10 @@ fun SettingsScreen(
                     )
                     SettingsDivider()
                     SettingsToggleRow(
-                        label = "Görsel Benzerlik (AI)",
+                        label = "Görsel Benzerlik",
                         description = "pHash/aHash/dHash ile analiz",
                         checked = settings.visualSimilarityEnabled,
                         onCheckedChange = { viewModel.updateVisualSimilarity(it) }
-                    )
-                    SettingsDivider()
-                    SettingsToggleRow(
-                        label = "Aynı Klasörü Dahil Et",
-                        description = "Aynı albümdeki fotoğrafları karşılaştır",
-                        checked = settings.includeSameFolderPhotos,
-                        onCheckedChange = { viewModel.updateSameFolder(it) }
                     )
                     SettingsDivider()
                     SettingsToggleRow(
@@ -135,38 +131,15 @@ fun SettingsScreen(
                     SettingsDivider()
                     SettingsToggleRow(
                         label = "Düşük Kalite Tespiti",
-                        description = "Bulanık fotoğrafları işaretle",
+                        description = "Tekil netlik önerileri; otomatik silme seçimi yapılmaz",
                         checked = settings.detectLowQuality,
                         onCheckedChange = { viewModel.updateLowQuality(it) }
                     )
                 }
             }
 
-            // ─── Smart Selection ──────────────────────────────────────────────
-            SettingsSection(title = "Akıllı Özellikler", icon = Icons.Default.AutoAwesome) {
-                Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                    SettingsToggleRow(
-                        label = "Akıllı Seçim",
-                        description = "En iyi fotoğrafı otomatik sakla",
-                        checked = settings.smartSelectionEnabled,
-                        onCheckedChange = { viewModel.updateSmartSelection(it) }
-                    )
-                    SettingsDivider()
-                    SettingsToggleRow(
-                        label = "Metadata Kullan",
-                        description = "Tarih ve kamera bilgisini dahil et",
-                        checked = settings.useMetadata,
-                        onCheckedChange = { viewModel.updateMetadata(it) }
-                    )
-                    SettingsDivider()
-                    SettingsToggleRow(
-                        label = "GPS Konumu Kullan",
-                        description = "Çekim yeri benzerliğini hesaba kat",
-                        checked = settings.useGpsMetadata,
-                        onCheckedChange = { viewModel.updateGps(it) }
-                    )
-                }
-            }
+            Text("Korunacak fotoğraf kalite puanına göre önerilir; sonuçları işlemden önce inceleyin. Klasör dışlama, metadata/GPS ile eşleştirme ve otomatik akıllı seçim seçenekleri henüz uygulanmadığından gösterilmez.",
+                style = MaterialTheme.typography.bodySmall)
 
             Spacer(Modifier.height(16.dp))
         }

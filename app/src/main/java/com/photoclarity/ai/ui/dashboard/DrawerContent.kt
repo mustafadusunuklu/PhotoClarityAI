@@ -34,7 +34,7 @@ private val drawerMenuItems = listOf(
     DrawerMenuItem(Icons.Default.History,       "Tarama Geçmişi",       Screen.ScanHistory.route),
     DrawerMenuItem(Icons.Default.Favorite,      "Favoriler",            Screen.Favorites.route),
     DrawerMenuItem(Icons.Default.AutoFixHigh,   "Akıllı Öneriler",      Screen.SmartSuggestions.route),
-    DrawerMenuItem(Icons.Default.Delete,        "Geri Dönüşüm Kutusu",  Screen.Trash.route),
+    DrawerMenuItem(Icons.Default.Delete,        "Sistem Çöp Kutusu Bilgisi",  Screen.Trash.route),
     DrawerMenuItem(Icons.Default.Info,          "Hakkında",             Screen.About.route)
 )
 

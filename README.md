@@ -2,7 +2,7 @@
 
 Mevcut Kotlin/Compose Android uygulaması; MediaStore üzerinden fotoğraf listeler, MD5/SHA-256 byte hash'leri ve pHash/aHash/dHash görsel hash'leriyle gruplar üretir, kalite/seri çekim önerileri ve silme akışı sunar. Kodda bir ML model servisi yoktur. Bazı görünen ekranlar demo/placeholder'dır; tamamlanmış özellik envanteri ve riskler [ana analiz ve roadmap](PHOTOCLARITYAI_PROJECT_ANALYSIS_AND_ROADMAP.md) içindedir.
 
-**Production-ready değildir.** Geri dönüşüm vaadi gerçek silme davranışıyla uyuşmuyor; keeper, cache transition ve silme sonucu reconciliation sorunları vardır. Faz 0 testlerinin geçmesi bu sorunların çözüldüğü anlamına gelmez. Gerçek kişisel galeride destructive QA yapmayın.
+**Production-ready değildir.** Faz 0 başlangıcındaki geri dönüşüm, keeper, cache transition ve silme sonucu riskleri için [Faz 1 güvenlik değişiklikleri](docs/PHASE1_SAFETY_REPORT.md) hazırlandı. Gerçek cihaz/sistem onayı kabul kapısı henüz geçilmedi; kalan platform, lifecycle ve doğruluk riskleri ana roadmap'te durur. Gerçek kişisel galeride destructive QA yapmayın.
 
 ## Build ortamı
 

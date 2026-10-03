@@ -13,6 +13,7 @@ import com.photoclarity.ai.domain.model.HashAlgorithm
 import com.photoclarity.ai.domain.model.Photo
 import com.photoclarity.ai.domain.model.ScanProgress
 import com.photoclarity.ai.domain.model.ScanSettings
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -72,7 +73,7 @@ class PhotoAnalyzer @Inject constructor(
         progress.emit(ScanProgress.Hashing(0, photos.size, ""))
 
         // ── Stage 1: Compute / retrieve hashes ───────────────────────────────
-        val hashedPhotos = computeHashesInParallel(photos, settings, progress)
+        val hashedPhotos = computeHashesInParallel(photos, settings, progress).filter { it.sharpnessScore >= 0f }
 
         if (!coroutineContext.isActive) {
             progress.emit(ScanProgress.Cancelled)
@@ -110,7 +111,7 @@ class PhotoAnalyzer @Inject constructor(
                     groupType = DuplicateGroup.GroupType.BURST_SHOT,
                     similarityScore = 0.95f,
                     recommendedKeepId = bestId,
-                    totalWasteBytes = burst.drop(1).sumOf { it.sizeBytes }
+                    totalWasteBytes = burst.filter { it.id != bestId }.sumOf { it.sizeBytes }
                 )
             }
             groups.addAll(burstGroups)
@@ -123,19 +124,13 @@ class PhotoAnalyzer @Inject constructor(
                 .filter { it.id !in processedIds }
                 .filter { (it.sharpnessScore / 1000f).coerceIn(0f, 1f) < LOW_QUALITY_SHARPNESS_THRESHOLD }
 
-            if (lowQuality.size >= 2) {
-                // Group all low-quality photos together as a single group
-                val sorted = lowQuality.sortedByDescending { it.qualityScore }
-                groups.add(
-                    DuplicateGroup(
-                        id = UUID.randomUUID().toString(),
-                        photos = sorted,
-                        groupType = DuplicateGroup.GroupType.LOW_QUALITY,
-                        similarityScore = 0f,
-                        recommendedKeepId = sorted.first().id,
-                        totalWasteBytes = sorted.drop(1).sumOf { it.sizeBytes }
-                    )
-                )
+            // Separate review suggestions; unrelated images never form a duplicate set.
+            lowQuality.filter { it.sharpnessScore >= 0f }.forEach { photo ->
+                groups.add(DuplicateGroup(
+                    id = UUID.randomUUID().toString(), photos = listOf(photo),
+                    groupType = DuplicateGroup.GroupType.LOW_QUALITY,
+                    similarityScore = 0f, recommendedKeepId = photo.id, totalWasteBytes = 0L
+                ))
             }
         }
 
@@ -181,51 +176,53 @@ class PhotoAnalyzer @Inject constructor(
 
             // ── Cache lookup ──────────────────────────────────────────────────
             val cached = hashCacheDao.getValidCache(uriString, photo.dateModified, photo.sizeBytes)
-            if (cached != null) {
-                return@withContext photo.copy(
-                    md5Hash      = cached.md5Hash,
-                    sha256Hash   = cached.sha256Hash,
-                    pHash        = cached.pHash,
-                    aHash        = cached.aHash,
-                    dHash        = cached.dHash,
-                    qualityScore = cached.qualityScore,
-                    sharpnessScore = cached.sharpnessScore
-                )
-            }
-
-            // ── Compute from scratch ──────────────────────────────────────────
-            var result = photo
-
-            if (settings.exactMatchEnabled) {
-                result = when (settings.hashAlgorithm) {
-                    HashAlgorithm.SHA256 -> result.copy(sha256Hash = cryptoHasher.computeSha256(photo.contentUri))
-                    else                 -> result.copy(md5Hash    = cryptoHasher.computeMd5(photo.contentUri))
-                }
-            }
-
-            if (settings.visualSimilarityEnabled) {
-                result = when (settings.hashAlgorithm) {
-                    HashAlgorithm.PHASH -> result.copy(pHash = pHasher.computePHash(photo.contentUri))
-                    HashAlgorithm.AHASH -> result.copy(aHash = aHasher.computeAHash(photo.contentUri))
-                    HashAlgorithm.DHASH -> result.copy(dHash = dHasher.computeDHash(photo.contentUri))
-                    else                -> result.copy(pHash = pHasher.computePHash(photo.contentUri))
-                }
-            }
-
-            // ── Sharpness / quality score ─────────────────────────────────────
-            val sharpness = runCatching {
-                val bitmap = bitmapUtils.decodeSampledBitmap(photo.contentUri, 256, 256)
-                bitmap?.let {
-                    val score = bitmapUtils.computeSharpness(it)
-                    it.recycle()
-                    score
-                } ?: 0f
-            }.getOrDefault(0f)
-
+            var result = if (cached != null) photo.copy(
+                md5Hash = cached.md5Hash, sha256Hash = cached.sha256Hash,
+                pHash = cached.pHash, aHash = cached.aHash, dHash = cached.dHash,
+                qualityScore = cached.qualityScore, sharpnessScore = cached.sharpnessScore
+            ) else photo.copy(md5Hash = null, sha256Hash = null, pHash = null, aHash = null, dHash = null)
+            // Old null-stream results must not survive in the cache.
             result = result.copy(
-                sharpnessScore = sharpness,
-                qualityScore   = qualityScorer.score(result.copy(sharpnessScore = sharpness))
+                md5Hash = result.md5Hash?.takeUnless { it == "d41d8cd98f00b204e9800998ecf8427e" },
+                sha256Hash = result.sha256Hash?.takeUnless { it == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
             )
+            val previous = result
+            if (settings.exactMatchEnabled) {
+                result = when {
+                    settings.hashAlgorithm == HashAlgorithm.SHA256 && result.sha256Hash == null ->
+                        result.copy(sha256Hash = cryptoHasher.computeSha256(photo.contentUri))
+                    settings.hashAlgorithm != HashAlgorithm.SHA256 && result.md5Hash == null ->
+                        result.copy(md5Hash = cryptoHasher.computeMd5(photo.contentUri))
+                    else -> result
+                }
+            }
+            if (settings.visualSimilarityEnabled) {
+                result = when {
+                    settings.visualHashAlgorithm == HashAlgorithm.PHASH && result.pHash == null ->
+                        result.copy(pHash = pHasher.computePHash(photo.contentUri))
+                    settings.visualHashAlgorithm == HashAlgorithm.AHASH && result.aHash == null ->
+                        result.copy(aHash = aHasher.computeAHash(photo.contentUri))
+                    settings.visualHashAlgorithm == HashAlgorithm.DHASH && result.dHash == null ->
+                        result.copy(dHash = dHasher.computeDHash(photo.contentUri))
+                    else -> result
+                }
+            }
+            // Legacy zero conflated failure with a flat image. Retry it; negative means unavailable.
+            if (cached == null || result.sharpnessScore <= 0f) {
+                val sharpness = try {
+                    val bitmap = bitmapUtils.decodeSampledBitmap(photo.contentUri, 256, 256)
+                    if (bitmap == null) -1f else try {
+                        bitmapUtils.computeSharpness(bitmap)
+                    } finally { bitmap.recycle() }
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { -1f }
+                result = result.copy(sharpnessScore = sharpness)
+                result = result.copy(qualityScore = qualityScorer.score(result))
+            }
+            if (cached != null && result == previous &&
+                cached.md5Hash == result.md5Hash && cached.sha256Hash == result.sha256Hash) {
+                return@withContext result
+            }
 
             // ── Persist to cache ──────────────────────────────────────────────
             hashCacheDao.insertCache(
@@ -293,7 +290,7 @@ class PhotoAnalyzer @Inject constructor(
         for (i in photos.indices) {
             for (j in i + 1 until photos.size) {
                 val a = photos[i]; val b = photos[j]
-                val similar = when (settings.hashAlgorithm) {
+                val similar = when (settings.visualHashAlgorithm) {
                     HashAlgorithm.PHASH -> {
                         val ha = a.pHash; val hb = b.pHash
                         if (ha != null && hb != null) hammingDistance.isSimilar(ha, hb, settings.similarityThreshold) else false
@@ -338,12 +335,20 @@ class PhotoAnalyzer @Inject constructor(
         var count = 0
         for (i in photos.indices) {
             for (j in i + 1 until photos.size) {
-                val sim = when (settings.hashAlgorithm) {
+                val sim = when (settings.visualHashAlgorithm) {
                     HashAlgorithm.PHASH -> {
                         val ha = photos[i].pHash; val hb = photos[j].pHash
                         if (ha != null && hb != null) hammingDistance.similarity(ha, hb) else 0f
                     }
-                    else -> settings.similarityThreshold
+                    HashAlgorithm.AHASH -> {
+                        val ha = photos[i].aHash; val hb = photos[j].aHash
+                        if (ha != null && hb != null) hammingDistance.similarity(ha, hb) else 0f
+                    }
+                    HashAlgorithm.DHASH -> {
+                        val ha = photos[i].dHash; val hb = photos[j].dHash
+                        if (ha != null && hb != null) hammingDistance.similarity(ha, hb) else 0f
+                    }
+                    else -> 0f
                 }
                 totalSim += sim
                 count++

@@ -35,7 +35,10 @@ class MainDispatcherRule : TestWatcher() {
 }
 
 internal class FakePhotoRepository : PhotoRepository {
-    var result: PhotoRepository.DeleteResult = PhotoRepository.DeleteResult.Success(0)
+    override var removalMode = PhotoRepository.RemovalMode.PERMANENT_DELETE
+    var result: PhotoRepository.DeleteResult = PhotoRepository.DeleteResult.Success(emptySet())
+    var verified = PhotoRepository.DeleteResult.Success(emptySet())
+    override suspend fun verifyTrashedPhotos(uris: List<Uri>) = verified
     val requests = mutableListOf<List<Uri>>()
     override suspend fun deletePhotos(uris: List<Uri>): PhotoRepository.DeleteResult {
         requests += uris.toList()
@@ -59,13 +62,14 @@ internal class FakeSettingsRepository : SettingsRepository {
 
 /** Implements only persistence semantics; real PhotoAnalyzer owns all analysis. */
 internal class FakeHashCacheDao(entries: List<HashCacheEntity>) : HashCacheDao {
-    private val cache = entries.associateBy { it.photoUri }.toMutableMap()
-    var writes = 0
+    private val cache = java.util.concurrent.ConcurrentHashMap(entries.associateBy { it.photoUri })
+    private val writeCount = java.util.concurrent.atomic.AtomicInteger()
+    val writes: Int get() = writeCount.get()
     override suspend fun getValidCache(uri: String, lastModified: Long, fileSize: Long) =
         cache[uri]?.takeIf { it.lastModified == lastModified && it.fileSize == fileSize }
     override suspend fun getByMd5(hash: String) = cache.values.filter { it.md5Hash == hash }
     override suspend fun getBySha256(hash: String) = cache.values.filter { it.sha256Hash == hash }
-    override suspend fun insertCache(entity: HashCacheEntity) { writes++; cache[entity.photoUri] = entity }
+    override suspend fun insertCache(entity: HashCacheEntity) { writeCount.incrementAndGet(); cache[entity.photoUri] = entity }
     override suspend fun insertAllCache(entities: List<HashCacheEntity>) { entities.forEach { insertCache(it) } }
     override suspend fun deleteByUri(uri: String) { cache.remove(uri) }
     override suspend fun deleteExpired(expiryTime: Long) { cache.entries.removeAll { it.value.cachedAt < expiryTime } }

@@ -27,12 +27,14 @@ interface PhotoRepository {
      */
     suspend fun getStorageInfo(): StorageInfo
 
-    /**
-     * Delete photos by URI list.
-     * On API 30+ returns an IntentSender for user confirmation.
-     * On older APIs deletes directly.
-     */
+    enum class RemovalMode { SYSTEM_TRASH, PERMANENT_DELETE }
+    val removalMode: RemovalMode
+
+    /** API 30+: system trash only. Older versions: permanent deletion after app confirmation. */
     suspend fun deletePhotos(uris: List<Uri>): DeleteResult
+
+    /** Verify IS_TRASHED after system approval; inaccessible/unknown rows fail closed. */
+    suspend fun verifyTrashedPhotos(uris: List<Uri>): DeleteResult.Success
 
     /**
      * Get total count of photos on device.
@@ -40,8 +42,14 @@ interface PhotoRepository {
     suspend fun getPhotoCount(): Int
 
     sealed class DeleteResult {
-        data class Success(val deletedCount: Int) : DeleteResult()
-        data class RequiresPermission(val intentSender: android.content.IntentSender) : DeleteResult()
+        data class Success(val removedUris: Set<Uri>, val failedUris: Set<Uri> = emptySet()) : DeleteResult()
+        data class RequiresPermission(
+            val intentSender: android.content.IntentSender,
+            val removedUris: Set<Uri> = emptySet(),
+            val failedUris: Set<Uri> = emptySet(),
+            // Android 10 grants permission; the frozen remaining request must then be retried.
+            val retryUris: List<Uri> = emptyList()
+        ) : DeleteResult()
         data class Error(val message: String) : DeleteResult()
     }
 }

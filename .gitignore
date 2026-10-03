@@ -20,6 +20,9 @@ proguard/
 *.jfr
 *.log
 
+# Device-test media is generated in memory; keep local reference copies out of Git.
+/app/src/androidTest/assets/phase1/*.png
+
 # Signing material and local credentials (no release key is required for baseline)
 *.jks
 *.keystore

@@ -126,8 +126,9 @@ object AppModule {
     fun providePhotoRepository(
         @ApplicationContext context: Context,
         scanner: MediaStoreScanner,
-        storageUtils: StorageUtils
-    ): PhotoRepository = PhotoRepositoryImpl(context, scanner, storageUtils)
+        storageUtils: StorageUtils,
+        removalPlatform: com.photoclarity.ai.core.media.MediaRemovalPlatform
+    ): PhotoRepository = PhotoRepositoryImpl(context, scanner, storageUtils, removalPlatform)
 
     @Provides
     @Singleton

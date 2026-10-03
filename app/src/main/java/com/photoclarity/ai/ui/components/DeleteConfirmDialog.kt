@@ -10,6 +10,7 @@ import com.photoclarity.ai.ui.theme.DeleteRed
 fun DeleteConfirmDialog(
     photoCount: Int,
     totalSizeLabel: String,
+    useSystemTrash: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -24,14 +25,15 @@ fun DeleteConfirmDialog(
         },
         title = {
             Text(
-                text = "Fotoğrafları Sil",
+                text = if (useSystemTrash) "Sistem Çöp Kutusuna Taşı" else "Fotoğrafları Kalıcı Sil",
                 style = MaterialTheme.typography.headlineSmall
             )
         },
         text = {
             Text(
-                text = "$photoCount fotoğraf ($totalSizeLabel) kalıcı olarak silinecek. " +
-                        "Bu işlem geri alınamaz.",
+                text = if (useSystemTrash) "$photoCount fotoğraf ($totalSizeLabel) cihazın sistem çöp kutusuna taşınacak. " +
+                        "Sonraki ekranda sistem onayı gerekir. Geri yükleme, saklama süresi ve kalıcı silme sistem veya galeri uygulaması tarafından yönetilir. PhotoClarityAI süre veya geri yükleme garantisi vermez."
+                    else "$photoCount fotoğraf ($totalSizeLabel) kalıcı olarak silinecek. Bu cihazda sistem çöp kutusu kullanılamıyor. Bu işlem geri alınamaz. Fotoğrafları kontrol ederek onaylayın.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -43,7 +45,7 @@ fun DeleteConfirmDialog(
                     containerColor = DeleteRed
                 )
             ) {
-                Text("Evet, Sil")
+                Text(if (useSystemTrash) "Sistem Onayına Geç" else "Evet, Kalıcı Sil")
             }
         },
         dismissButton = {

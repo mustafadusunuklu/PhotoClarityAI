@@ -1,7 +1,12 @@
 package com.photoclarity.ai.ui.results
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import android.app.Activity
-import android.content.IntentSender
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,7 +23,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -37,35 +41,32 @@ fun ResultsScreen(
     viewModel: ResultsViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    var showDeleteDialog by remember { mutableStateOf(false) }
-    val context = LocalContext.current
 
-    // Android 11+ delete request launcher
+    BackHandler(enabled = uiState.selectionLocked) { /* Finish/cancel consent before leaving. */ }
+    val context = LocalContext.current
+    val legacyWriteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        viewModel.onLegacyWritePermissionResult(it)
+    }
+
+    // System trash consent (API 30+) or per-photo write consent (API 29).
     val deleteRequestLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            viewModel.onDeleteConfirmed()
-        }
+        viewModel.onDeleteResult(result.resultCode == Activity.RESULT_OK)
     }
 
     LaunchedEffect(uiState.pendingDeleteIntentSender) {
         uiState.pendingDeleteIntentSender?.let { sender ->
-            deleteRequestLauncher.launch(
-                IntentSenderRequest.Builder(sender).build()
-            )
+            viewModel.onDeletePromptLaunched()
+            try {
+                deleteRequestLauncher.launch(IntentSenderRequest.Builder(sender).build())
+            } catch (e: Exception) { viewModel.onDeletePromptFailed() }
         }
     }
 
-    // Snackbar for undo
     val snackbarHostState = remember { SnackbarHostState() }
-    LaunchedEffect(uiState.lastDeletedCount) {
-        if (uiState.lastDeletedCount > 0) {
-            snackbarHostState.showSnackbar(
-                message = "${uiState.lastDeletedCount} fotoğraf silindi",
-                duration = SnackbarDuration.Short
-            )
-        }
+    LaunchedEffect(uiState.message) {
+        uiState.message?.let { snackbarHostState.showSnackbar(it, duration = SnackbarDuration.Long) }
     }
 
     Scaffold(
@@ -75,7 +76,7 @@ fun ResultsScreen(
             TopAppBar(
                 title = { Text("Sonuçlar", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = onBack, enabled = !uiState.selectionLocked) {
                         Icon(Icons.Default.ArrowBack, "Geri")
                     }
                 },
@@ -94,17 +95,18 @@ fun ResultsScreen(
                 DeleteBottomBar(
                     selectedCount = uiState.selectedPhotoCount,
                     totalSizeLabel = uiState.selectedSizeLabel,
-                    onDelete = { showDeleteDialog = true }
+                    onDelete = { viewModel.requestDeleteConfirmation() },
+                    isBusy = uiState.isLoading,
+                    useSystemTrash = uiState.removalMode == com.photoclarity.ai.domain.repository.PhotoRepository.RemovalMode.SYSTEM_TRASH
                 )
             }
         }
     ) { padding ->
         if (uiState.groups.isEmpty() && !uiState.isLoading) {
-            EmptyStateView(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-            )
+            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+                uiState.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                EmptyStateView(modifier = Modifier.weight(1f))
+            }
         } else {
             LazyColumn(
                 modifier = Modifier
@@ -114,15 +116,22 @@ fun ResultsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item {
+                    if (uiState.isLoading) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text("Fotoğraf işlemi sürüyor; sistem onayını tamamlayın.")
+                    }
+                    uiState.error?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
+                    }
                     // Header
                     Column {
                         Text(
-                            text = "${uiState.groups.size} Benzer Set Bulundu",
+                            text = "${uiState.groups.count { it.groupType != com.photoclarity.ai.domain.model.DuplicateGroup.GroupType.LOW_QUALITY }} Fotoğraf Grubu",
                             style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "İnceleyin ve alan açın.",
+                            text = "Korunacak fotoğraf seçilemez. Diğer fotoğrafları işlemden önce tek tek inceleyin.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -130,7 +139,8 @@ fun ResultsScreen(
 
                         // Smart select button
                         GradientButton(
-                            text = "En İyiyi Akıllı Seç",
+                            text = "Korunacaklar Dışındakileri Seç",
+                            enabled = !uiState.selectionLocked,
                             onClick = { viewModel.smartSelectAll() },
                             leadingIcon = {
                                 Icon(
@@ -164,7 +174,7 @@ fun ResultsScreen(
                             )
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = "Yığın ${index + 1} / ${uiState.groups.size}",
+                                text = if (group.groupType == com.photoclarity.ai.domain.model.DuplicateGroup.GroupType.LOW_QUALITY) "Tekil kalite önerisi" else "Grup ${index + 1} / ${uiState.groups.size}",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -190,7 +200,8 @@ fun ResultsScreen(
                         onPhotoSelectionChanged = { photoId, selected ->
                             viewModel.togglePhotoSelection(photoId, selected)
                         },
-                        qualityScorer = viewModel.qualityScorer
+                        qualityScorer = viewModel.qualityScorer,
+                        selectionEnabled = !uiState.selectionLocked
                     )
                 }
             }
@@ -198,15 +209,20 @@ fun ResultsScreen(
     }
 
     // Delete confirmation dialog
-    if (showDeleteDialog) {
+    if (uiState.confirmationPhotos != null && !uiState.waitingForLegacyWritePermission) {
         DeleteConfirmDialog(
-            photoCount = uiState.selectedPhotoCount,
-            totalSizeLabel = uiState.selectedSizeLabel,
+            photoCount = uiState.confirmationPhotos.orEmpty().size,
+            totalSizeLabel = uiState.confirmationSizeLabel,
+            useSystemTrash = uiState.removalMode == com.photoclarity.ai.domain.repository.PhotoRepository.RemovalMode.SYSTEM_TRASH,
             onConfirm = {
-                showDeleteDialog = false
-                viewModel.deleteSelectedPhotos()
+                if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    viewModel.onLegacyWritePermissionRequested()
+                    try { legacyWriteLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE) }
+                    catch (e: Exception) { viewModel.onLegacyWritePermissionResult(false) }
+                } else viewModel.deleteSelectedPhotos()
             },
-            onDismiss = { showDeleteDialog = false }
+            onDismiss = { viewModel.dismissDeleteConfirmation() }
         )
     }
 }
@@ -215,7 +231,9 @@ fun ResultsScreen(
 private fun DeleteBottomBar(
     selectedCount: Int,
     totalSizeLabel: String,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    isBusy: Boolean,
+    useSystemTrash: Boolean
 ) {
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -231,7 +249,7 @@ private fun DeleteBottomBar(
         ) {
             Column {
                 Text(
-                    text = "Silinmek üzere seçildi",
+                    text = "İşlem için seçildi (dosya boyutu)",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -244,7 +262,8 @@ private fun DeleteBottomBar(
             }
 
             GradientButton(
-                text = "Sil ($selectedCount)",
+                text = if (useSystemTrash) "Çöp Kutusu ($selectedCount)" else "Kalıcı Sil ($selectedCount)",
+                enabled = !isBusy,
                 onClick = onDelete,
                 gradientStart = DeleteRed,
                 gradientEnd = DeleteRed.copy(red = 0.8f),

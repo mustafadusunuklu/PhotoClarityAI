@@ -28,29 +28,30 @@ class CryptographicHasherCharacterizationTest {
         hasher = CryptographicHasher(context)
     }
 
-    /** KNOWN BUG R03: these are characterization expectations, not safety requirements. */
-    @Test fun nullStreamCurrentlyReturnsEmptyMd5() = runBlocking {
+    /** R03 regression: inaccessible files have no usable digest. */
+    @Test fun nullStreamHasNoMd5(): Unit = runBlocking {
         `when`(resolver.openInputStream(uri)).thenReturn(null)
-        assertEquals("d41d8cd98f00b204e9800998ecf8427e", hasher.computeMd5(uri))
+        assertNull(hasher.computeMd5(uri))
     }
 
-    @Test fun nullStreamCurrentlyReturnsEmptySha256() = runBlocking {
+    @Test fun nullStreamHasNoSha256(): Unit = runBlocking {
         `when`(resolver.openInputStream(uri)).thenReturn(null)
-        assertEquals("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", hasher.computeSha256(uri))
+        assertNull(hasher.computeSha256(uri))
     }
 
-    @Test fun distinctUnreadableUrisCurrentlyCollide() = runBlocking {
+    @Test fun distinctUnreadableUrisHaveNoUsableHashes(): Unit = runBlocking {
         val other = mock(Uri::class.java)
-        assertEquals(hasher.computeMd5(uri), hasher.computeMd5(other))
+        assertNull(hasher.computeMd5(uri))
+        assertNull(hasher.computeMd5(other))
     }
 
-    @Test fun openingExceptionReturnsNullForBothAlgorithms() = runBlocking {
+    @Test fun openingExceptionReturnsNullForBothAlgorithms(): Unit = runBlocking {
         `when`(resolver.openInputStream(uri)).thenThrow(FileNotFoundException("synthetic"))
         assertNull(hasher.computeMd5(uri))
         assertNull(hasher.computeSha256(uri))
     }
 
-    @Test fun readExceptionReturnsNullAndClosesStream() = runBlocking {
+    @Test fun readExceptionReturnsNullAndClosesStream(): Unit = runBlocking {
         var closed = false
         val stream = object : InputStream() {
             override fun read(): Int = throw IOException("synthetic")
@@ -61,7 +62,7 @@ class CryptographicHasherCharacterizationTest {
         assertTrue(closed)
     }
 
-    @Test fun fixtureBytesAreHashedAcrossBufferBoundariesAndClosed() = runBlocking {
+    @Test fun fixtureBytesAreHashedAcrossBufferBoundariesAndClosed(): Unit = runBlocking {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/fixtures/base.png")).use { it.readBytes() }
         assertTrue(bytes.size > 8192)
         var closed = false
@@ -73,4 +74,19 @@ class CryptographicHasherCharacterizationTest {
         assertEquals(expected, hasher.computeSha256(uri))
         assertTrue(closed)
     }
+    @Test fun emptyInputIsNotAUsablePhotoDigest(): Unit = runBlocking {
+        `when`(resolver.openInputStream(uri)).thenReturn(ByteArrayInputStream(byteArrayOf()))
+        assertNull(hasher.computeMd5(uri))
+    }
+    @Test fun cancellationIsRethrownAndStreamClosed(): Unit = runBlocking {
+        var closed = false
+        val stream = object : InputStream() {
+            override fun read(): Int = throw kotlinx.coroutines.CancellationException("cancel")
+            override fun close() { closed = true }
+        }
+        `when`(resolver.openInputStream(uri)).thenReturn(stream)
+        try { hasher.computeSha256(uri); fail("Cancellation must propagate") }
+        catch (e: kotlinx.coroutines.CancellationException) { assertTrue(closed) }
+    }
+
 }
