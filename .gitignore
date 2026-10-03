@@ -1,28 +1,35 @@
-# Android için .gitignore
-
-# Gradle önbelleği
+# Local build, IDE and machine configuration
 .gradle/
-build/
-app/build/
-
-# IDE dosyaları
+.kotlin/
+**/build/
 .idea/
 *.iml
 *.ipr
 *.iws
-
-# Local properties (SDK yolu - bilgisayara özel)
 local.properties
-
-# OS dosyaları
 .DS_Store
 Thumbs.db
-
-# Proguard
+.navigation/
+*.class
 proguard/
 
-# Android Studio Navigation editor
-.navigation/
+# Local snapshots and potentially private diagnostic data: retain, never upload
+.baseline/
+*.hprof
+*.heapdump
+*.jfr
+*.log
 
-# Kotlin
-*.class
+# Signing material and local credentials (no release key is required for baseline)
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+.env
+.env.*
+keystore.properties
+signing.properties
+credentials.properties
+
+# gradle/wrapper/gradle-wrapper.jar intentionally remains versionable.

@@ -1,0 +1,7 @@
+# Keep Wrapper executable text usable across Windows/Linux; don't renormalize sources.
+gradlew text eol=lf
+gradlew.bat text eol=crlf
+gradle/wrapper/gradle-wrapper.properties text eol=lf
+.github/workflows/*.yml text eol=lf
+gradle.properties text eol=lf
+PHOTOCLARITYAI_PROJECT_ANALYSIS_AND_ROADMAP.md text eol=lf

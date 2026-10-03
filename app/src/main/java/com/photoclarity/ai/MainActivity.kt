@@ -51,7 +51,7 @@ class MainActivity : ComponentActivity() {
                     else Screen.Onboarding.route
                 }
 
-                // ── Navigate helper ─────────────────────────────────────────
+
                 val navigateTo: (String) -> Unit = { route ->
                     Toast.makeText(this@MainActivity, "Navigate: $route", Toast.LENGTH_SHORT).show()
                     scope.launch { drawerState.close() }
