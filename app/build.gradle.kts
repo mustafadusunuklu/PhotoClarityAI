@@ -8,12 +8,12 @@ plugins {
 
 android {
     namespace = "com.photoclarity.ai"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.photoclarity.ai"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
 
@@ -95,12 +95,6 @@ dependencies {
 
     // ExifInterface
     implementation(libs.androidx.exifinterface)
-
-    // Accompanist Permissions
-    implementation(libs.accompanist.permissions)
-
-    // Gson
-    implementation(libs.gson)
 
     // Testing
     testImplementation(libs.junit)

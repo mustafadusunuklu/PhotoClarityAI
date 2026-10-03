@@ -48,7 +48,10 @@ interface PhotoRepository {
             val removedUris: Set<Uri> = emptySet(),
             val failedUris: Set<Uri> = emptySet(),
             // Android 10 grants permission; the frozen remaining request must then be retried.
-            val retryUris: List<Uri> = emptyList()
+            val retryUris: List<Uri> = emptyList(),
+            // API 30+: verify only this approved batch, then request fresh consent for the rest.
+            val trashUris: List<Uri> = emptyList(),
+            val remainingTrashUris: List<Uri> = emptyList()
         ) : DeleteResult()
         data class Error(val message: String) : DeleteResult()
     }

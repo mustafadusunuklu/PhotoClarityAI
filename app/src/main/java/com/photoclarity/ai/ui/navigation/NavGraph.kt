@@ -23,6 +23,8 @@ import com.photoclarity.ai.ui.scan.ScanScreen
 import com.photoclarity.ai.ui.settings.SettingsScreen
 import com.photoclarity.ai.ui.suggestions.SmartSuggestionsScreen
 import com.photoclarity.ai.ui.trash.TrashScreen
+import com.photoclarity.ai.ui.components.LocalPhotoAccess
+import com.photoclarity.ai.core.media.PhotoAccess
 
 @Composable
 fun PhotoClarityNavGraph(
@@ -31,6 +33,12 @@ fun PhotoClarityNavGraph(
     onOpenDrawer: () -> Unit = {},
     onNavigate: (String) -> Unit = {}
 ) {
+    val access = LocalPhotoAccess.current
+    val startScan: () -> Unit = {
+        if (access.snapshot.access != PhotoAccess.DENIED && access.snapshot.error == null)
+            navController.navigate(Screen.Scan.route)
+        else access.request()
+    }
     NavHost(
         navController    = navController,
         startDestination = startDestination,
@@ -67,7 +75,7 @@ fun PhotoClarityNavGraph(
         composable(Screen.Dashboard.route) {
             DashboardScreen(
                 onOpenDrawer  = onOpenDrawer,
-                onStartScan   = { navController.navigate(Screen.Scan.route) },
+                onStartScan   = startScan,
                 onOpenResults = { navController.navigate(Screen.Results.route) },
                 onNavigate    = onNavigate
             )
@@ -77,7 +85,7 @@ fun PhotoClarityNavGraph(
         composable(Screen.Photos.route) {
             PhotosScreen(
                 onOpenDrawer  = onOpenDrawer,
-                onStartScan   = { navController.navigate(Screen.Scan.route) },
+                onStartScan   = startScan,
                 onOpenResults = { navController.navigate(Screen.Results.route) },
                 onNavigate    = onNavigate
             )

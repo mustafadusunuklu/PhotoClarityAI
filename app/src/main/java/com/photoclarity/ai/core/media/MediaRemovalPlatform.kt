@@ -20,6 +20,7 @@ class MediaRemovalPlatform @Inject constructor(@ApplicationContext private val c
             PhotoRepository.RemovalMode.SYSTEM_TRASH else PhotoRepository.RemovalMode.PERMANENT_DELETE
 
     fun createTrashPrompt(uris: List<Uri>): IntentSender {
+        require(uris.isNotEmpty() && uris.size <= RemovalBatchPolicy.MAX_TRASH_URIS)
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             throw UnsupportedOperationException("System trash requires Android 11 or later")
         }

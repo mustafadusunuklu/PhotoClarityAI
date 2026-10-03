@@ -14,6 +14,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.photoclarity.ai.ui.components.QualityChip
 import com.photoclarity.ai.ui.theme.Secondary
@@ -27,8 +28,9 @@ fun GroupDetailScreen(
     onBack: () -> Unit,
     viewModel: ResultsViewModel = hiltViewModel()
 ) {
-    val group = viewModel.getGroupById(groupId) ?: run {
-        onBack()
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val group = state.groups.firstOrNull { it.id == groupId } ?: run {
+        LaunchedEffect(groupId) { onBack() }
         return
     }
 

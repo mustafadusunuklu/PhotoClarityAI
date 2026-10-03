@@ -180,3 +180,11 @@ Yukarıdaki “commit/push yapılmadı” ifadeleri önceki implementasyon ve ci
 - Son test APK'sıyla dış fixture argümanları verilerek **12 test tek koşuda / 0 failure / 0 skipped**, **36.095 saniye**. Her test setup'ında üretilen PNG boyutu ve SHA-256 aynı referansla doğrulandı. Sonuçlar `.baseline/phase1-publication/device-check.log` ve `local-check.log` içinde; log/APK/PNG commit dışındadır. Yalnız belirli test URI/dosyaları temizlendi, geçici READ_MEDIA_IMAGES izni önceki false durumuna döndü.
 - Açık kabul maddeleri aynen korunur: **API 26–30 cihaz matrisi**, **galeri UI üzerinden geri yükleme**, **diğer OEM/provider/izin senaryoları** ve **landscape snackbar/empty-state UX örtüşmesi**. Faz 1 genel durum **PARTIAL**; Faz 2 başlatılmadı.
 - Yayın kapsamı production Faz 1 güvenlik düzeltmeleri, JVM/cihaz test kaynakları, yeni medya kopyasını dışlayan ignore kuralı ve rapor/roadmap/runbook'tur. Commit adayı staged blob düzeyinde secret/private-key, binary media, heap dump, build/emulator/local dosya ve kullanıcı verisi bakımından kontrol edilir. CI sonuçları commit sonrası GitHub Actions ve son sohbet kaydıyla doğrulanmalıdır; bu belge henüz çalışmamış CI'ı başarılı saymaz.
+
+## Faz 2 regresyon notu — 2026-10-04
+
+Kullanıcı Faz 2'yi ayrıca başlattı; önceki “Faz 2 başlatılmadı” ifadeleri tarihsel yayın kayıtlarıdır. Target 36 platform/izin değişiklikleriyle son API 37 koşusunda **12 Faz 1 testi / 0 failure / 0 skip**, **33.652 s**. Başarılı boş sonuç artık “Bu taramada grup kalmadı” der; LIMITED erişim tüm galeri temizliği gibi sunulmaz. Landscape başlık assertion'ı ilk denemede yeni izin alanının yüksekliği nedeniyle görünmez kaldı; izin alanı geniş pencerede yatay yerleşince assertion kaldırılmadan geçti. Mevcut landscape snackbar/subtitle örtüşmesi hâlâ açık UX borcudur.
+
+Faz 2'nin gerçek 2.000+1 sistem onayı testinde keeper ve kalan aday korundu, ilk 2.000 URI trash olarak doğrulandı, iptal önceki başarıyı geri almadı, alan sayacı 0 kaldı. Bu test büyük production grup UI'sinin performansını veya tüm OS/OEM davranışlarını kapatmaz. Ayrıntılar: [Faz 2 platform raporu](PHASE2_PLATFORM_REPORT.md).
+
+**Faz 1 kabul PARTIAL kalır:** API 26–30 cihaz matrisi, galeri UI üzerinden restore, OEM/izin/provider senaryoları ve landscape snackbar UX maddeleri korunur. Faz 2 çalışmalarında commit/push yapılmadı ve Faz 3'e geçilmedi.

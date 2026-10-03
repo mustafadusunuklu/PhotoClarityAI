@@ -44,6 +44,10 @@ fun ResultsScreen(
 
     BackHandler(enabled = uiState.selectionLocked) { /* Finish/cancel consent before leaving. */ }
     val context = LocalContext.current
+    val openPermissionSettings: () -> Unit = {
+        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            android.net.Uri.parse("package:${context.packageName}")))
+    }
     val legacyWriteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         viewModel.onLegacyWritePermissionResult(it)
     }
@@ -105,7 +109,16 @@ fun ResultsScreen(
         if (uiState.groups.isEmpty() && !uiState.isLoading) {
             Column(modifier = Modifier.fillMaxSize().padding(padding)) {
                 uiState.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
-                EmptyStateView(modifier = Modifier.weight(1f))
+                if (uiState.error?.contains("Silme izni verilmedi") == true) {
+                    TextButton(onClick = openPermissionSettings) { Text("Silme izin ayarlarını aç") }
+                }
+                EmptyStateView(
+                    title = if (uiState.error != null) "Sonuçlar doğrulanamadı" else "Bu taramada grup kalmadı",
+                    subtitle = if (uiState.error != null) "İzni kontrol ederek yeniden tarayın; bu ekran galerinizin temiz olduğunu göstermez."
+                        else if (com.photoclarity.ai.ui.scan.ScanResultHolder.access == com.photoclarity.ai.core.media.PhotoAccess.LIMITED)
+                            "Yalnız erişim verdiğiniz fotoğraflar incelendi. Tüm galeri taranmadı."
+                        else "Bu taramanın kapsamındaki kopya veya benzer fotoğraf grupları gösterilir.",
+                    modifier = Modifier.weight(1f))
             }
         } else {
             LazyColumn(
@@ -119,9 +132,14 @@ fun ResultsScreen(
                     if (uiState.isLoading) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         Text("Fotoğraf işlemi sürüyor; sistem onayını tamamlayın.")
+                        if (uiState.consentBatchCount > 1) Text("Sistem onayı: ${uiState.consentBatch} / ${uiState.consentBatchCount} bölüm. İptal, tamamlanan bölümleri geri almaz.")
                     }
                     uiState.error?.let {
                         Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
+                    }
+                    if (uiState.error?.contains("Silme izni verilmedi") == true) {
+                        Text("Kalıcı silme için depolama yazma izni gerekir. İzni cihaz ayarlarından değiştirebilirsiniz.")
+                        TextButton(onClick = openPermissionSettings) { Text("Silme izin ayarlarını aç") }
                     }
                     // Header
                     Column {

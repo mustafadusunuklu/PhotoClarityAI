@@ -2,22 +2,22 @@
 
 Mevcut Kotlin/Compose Android uygulaması; MediaStore üzerinden fotoğraf listeler, MD5/SHA-256 byte hash'leri ve pHash/aHash/dHash görsel hash'leriyle gruplar üretir, kalite/seri çekim önerileri ve silme akışı sunar. Kodda bir ML model servisi yoktur. Bazı görünen ekranlar demo/placeholder'dır; tamamlanmış özellik envanteri ve riskler [ana analiz ve roadmap](PHOTOCLARITYAI_PROJECT_ANALYSIS_AND_ROADMAP.md) içindedir.
 
-**Production-ready değildir.** Faz 0 başlangıcındaki geri dönüşüm, keeper, cache transition ve silme sonucu riskleri için [Faz 1 güvenlik değişiklikleri](docs/PHASE1_SAFETY_REPORT.md) hazırlandı. Gerçek cihaz/sistem onayı kabul kapısı henüz geçilmedi; kalan platform, lifecycle ve doğruluk riskleri ana roadmap'te durur. Gerçek kişisel galeride destructive QA yapmayın.
+**Production-ready değildir.** [Faz 1 güvenlik raporu](docs/PHASE1_SAFETY_REPORT.md) API 37 emülatöründeki gerçek sistem onayı/çöp kutusu kanıtlarını ve açık cihaz matrisi maddelerini içerir. Faz 2 platform/izin çalışmasının kapsamı ve doğrulama sınırları [Faz 2 raporundadır](docs/PHASE2_PLATFORM_REPORT.md). Gerçek kişisel galeride destructive QA yapmayın.
 
 ## Build ortamı
 
-| Bileşen | Baseline |
+| Bileşen | Faz 2 çalışma ağacı |
 |---|---|
-| Gradle / AGP | Wrapper 8.7 / 8.5.2 |
+| Gradle / AGP | Wrapper 8.11.1 / 8.10.1 |
 | Kotlin / KSP | 2.0.21 / 2.0.21-1.0.27 |
-| Android SDK | min 26, compile/target 34, build-tools 34.0.0 |
+| Android SDK | min 26, compile/target 36, build-tools 35.0.0 (AGP varsayılanı) |
 | CI JDK / bytecode | Temurin JDK 17 / JVM 17 |
 | Yerel doğrulama | Android Studio JBR 21.0.10, Windows 11 |
 | Unit test araçları | JUnit 4.13.2, Mockito 5.14.2, coroutines-test 1.9.0 |
 
-JDK 17, AGP 8.5'in minimum ve CI referansıdır. Gradle 8.7 JDK 21 ile de çalışır; yerel test bununla yapılmıştır. Terminalin JDK 25 varsayılanını kullanmayın; Gradle 8.7 için desteklenen çalıştırma JVM'i değildir. Android Studio Gradle JDK ayarı terminalden ayrı olabilir. IDE sürüm adına güvenmek yerine Gradle JDK ve Wrapper çıktısını kontrol edin. Production dependency/SDK sürümleri Faz 0'da güncellenmemiştir.
+JDK 17, AGP 8.10'un minimum ve CI referansıdır. Gradle 8.11.1 JDK 21 ile de çalışır; yerel doğrulamada JBR 21 kullanılır. Terminalin JDK 25 varsayılanını kullanmayın; bu Wrapper için desteklenen çalıştırma JVM'i değildir. Android Studio Gradle JDK ayarı terminalden ayrı olabilir. IDE sürüm adına güvenmek yerine Gradle JDK ve Wrapper çıktısını kontrol edin. Tarihsel Faz 0 sürümleri baseline raporunda korunur.
 
-Kaynaklar: [AGP 8.5 uyumluluğu](https://developer.android.com/build/releases/past-releases/agp-8-5-0-release-notes), [Gradle JVM matrisi](https://docs.gradle.org/current/userguide/compatibility.html), [Wrapper checksum](https://docs.gradle.org/current/userguide/gradle_wrapper.html).
+Kaynaklar: [AGP 8.10 uyumluluğu](https://developer.android.com/build/releases/agp-8-10-0-release-notes), [Gradle JVM matrisi](https://docs.gradle.org/current/userguide/compatibility.html), [Wrapper checksum](https://docs.gradle.org/current/userguide/gradle_wrapper.html).
 
 ## Temiz checkout / çalıştırma
 
@@ -30,7 +30,7 @@ cd PhotoClarityAI
 
 Bu runbook, Faz 0 baseline commit'ini içeren checkout için geçerlidir. Eski commit'leri veya başka bir yerel kopyayı açtıysanız önce branch/commit'i doğrulayın.
 
-Android SDK Manager ile `platforms;android-34` ve `build-tools;34.0.0` kurun; lisansları kabul edin. SDK konumunu `ANDROID_HOME` ortam değişkeniyle ya da Git tarafından ignore edilen `local.properties` içinde belirtin. Windows örneği (kendi SDK konumunuza göre):
+Android SDK Manager ile `platforms;android-36` ve `build-tools;35.0.0` kurun; lisansları kabul edin. SDK konumunu `ANDROID_HOME` ortam değişkeniyle ya da Git tarafından ignore edilen `local.properties` içinde belirtin. Windows örneği (kendi SDK konumunuza göre):
 
 ```properties
 sdk.dir=C\:\\Users\\YOUR_USER\\AppData\\Local\\Android\\Sdk
@@ -72,7 +72,7 @@ Detaylar: [Faz 0 raporu](docs/PHASE0_BASELINE_REPORT.md), [benchmark planı](doc
 
 ## CI ve dosya güvenliği
 
-`.github/workflows/android-baseline.yml`: push/PR/manual, JDK 17, SDK 34, checksum kontrollü Wrapper, clean debug, unsigned release, gerçek unit test sayısı kapısı ve lint. GitHub Actions yalnız sonuç raporlarını yükler; signing/credential istemez. Yerel build ve workflow statik kontrolü, GitHub Actions run sonucunun yerine geçmez; ilgili commit'in run durumunu ayrıca doğrulayın.
+`.github/workflows/android-baseline.yml`: push/PR/manual, JDK 17, SDK 36, checksum kontrollü Wrapper, clean debug, unsigned release, en az 63 gerçek JVM testi ve lint. GitHub Actions yalnız sonuç raporlarını yükler; signing/credential istemez. Yerel build ve workflow statik kontrolü, GitHub Actions run sonucunun yerine geçmez; ilgili commit'in run durumunu ayrıca doğrulayın.
 
 `.gitignore` heap dump, `.baseline`, IDE, build/cache, makine SDK ayarı ve signing/credential dosyalarını dışlar. Ignore, dosyaların diskten silinmesi veya anonimleştirilmesi değildir. Mevcut 3.61 GiB heap dump korunur; içinde kullanıcı verisi bulunabilir. Yerel snapshot kaynaklar ve `local.properties` içerir, özel yedek olarak tutulmalıdır; paylaşmayın. Ignore, daha önce track edilmiş secret'ı geçmişten kaldırmaz; baseline geçmişinde böyle bir dosya tespit edilmedi. Genel anahtar sözcük taraması secret yokluğu garantisi değildir.
 

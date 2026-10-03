@@ -55,6 +55,19 @@ class MediaRemovalSafetyTest {
         val result = repo.deletePhotos(listOf(a)) as PhotoRepository.DeleteResult.RequiresPermission
         assertSame(sender,result.intentSender); verifyNoInteractions(resolver)
     }
+    @Test fun largeTrashRequestIsBoundedDeduplicatedAndKeepsFrozenRemainder(): Unit = runBlocking {
+        `when`(platform.mode).thenReturn(PhotoRepository.RemovalMode.SYSTEM_TRASH)
+        val uris = (1..2001).map { uri(it.toString()) }
+        val batch = uris.take(2000)
+        val sender = mock(IntentSender::class.java)
+        `when`(platform.createTrashPrompt(batch)).thenReturn(sender)
+        val result = repo.deletePhotos(uris + uris.first()) as PhotoRepository.DeleteResult.RequiresPermission
+        assertEquals(batch, result.trashUris)
+        assertEquals(listOf(uris.last()), result.remainingTrashUris)
+        assertTrue(result.retryUris.isEmpty())
+        verify(platform).createTrashPrompt(batch)
+        verifyNoInteractions(resolver)
+    }
     @Test fun trashVerificationFailsClosedForUnknownAndUnchangedRows(): Unit = runBlocking {
         `when`(platform.mode).thenReturn(PhotoRepository.RemovalMode.SYSTEM_TRASH)
         val a = uri("1"); val b = uri("2"); val c = uri("3")

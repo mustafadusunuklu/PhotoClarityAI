@@ -401,7 +401,7 @@ class Phase1DeviceAcceptanceTest {
         assertFalse(MediaRemovalPlatform(context).isTrashed(photos.first().contentUri))
         photos.drop(1).forEach { assertTrue(MediaRemovalPlatform(context).isTrashed(it.contentUri)) }
         // Landscape snackbar covers the subtitle: assert the visible empty title and actual outcome.
-        awaitText("Galeriniz Tertemiz! ✨")
+        awaitText("Bu taramada grup kalmadı")
         assertTrue(ScanResultHolder.groups.isEmpty())
         evidence("system-consent-landscape-result")
         activityRule.scenario.onActivity {

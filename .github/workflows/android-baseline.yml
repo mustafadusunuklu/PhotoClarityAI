@@ -1,4 +1,4 @@
-name: Android Phase 0 baseline
+name: Android platform and safety checks
 
 on:
   push:
@@ -26,24 +26,24 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Android SDK 34
+      - name: Android SDK 36
         shell: bash
         run: |
           set -euo pipefail
           test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-34' 'build-tools;34.0.0'
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;35.0.0'
       - name: Verify Wrapper before executing it
         shell: bash
         run: |
           set -euo pipefail
-          echo 'cb0da6751c2b753a16ac168bb354870ebb1e162e9083f116729cec9c781156b8  gradle/wrapper/gradle-wrapper.jar' | sha256sum --check --strict
-          grep -Fx 'distributionSha256Sum=544c35d6bd849ae8a5ed0bcea39ba677dc40f49df7d1835561582da2009b961d' gradle/wrapper/gradle-wrapper.properties
+          echo '2db75c40782f5e8ba1fc278a5574bab070adccb2d21ca5a6e5ed840888448046  gradle/wrapper/gradle-wrapper.jar' | sha256sum --check --strict
+          grep -Fx 'distributionSha256Sum=f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6' gradle/wrapper/gradle-wrapper.properties
           bash ./gradlew --version
-      - name: Clean debug, unsigned release, unit tests and lint
+      - name: Clean debug/test APKs, unsigned release, unit tests and lint
         shell: bash
         run: |
           set -euo pipefail
-          bash ./gradlew --no-daemon --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8' clean :app:assembleDebug :app:bundleRelease :app:testDebugUnitTest :app:lintDebug --console=plain
+          bash ./gradlew --no-daemon --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8' clean :app:assembleDebug :app:assembleDebugAndroidTest :app:bundleRelease :app:testDebugUnitTest :app:lintDebug :app:lintRelease --console=plain
       - name: Require real tests (reject NO-SOURCE)
         shell: python
         run: |
@@ -54,7 +54,7 @@ jobs:
           roots = [ET.parse(p).getroot() for p in reports]
           count = sum(int(r.attrib['tests']) for r in roots)
           failures = sum(int(r.attrib.get('failures', 0)) + int(r.attrib.get('errors', 0)) + int(r.attrib.get('skipped', 0)) for r in roots)
-          assert count >= 24, f'Expected at least 24 baseline tests, found {count}'
+          assert count >= 63, f'Expected platform and safety tests, found {count}'
           assert failures == 0, f'{failures} failed/error/skipped tests'
           print(f'{count} tests; zero failures/errors/skips')
       - name: Upload only build reports
@@ -68,3 +68,4 @@ jobs:
             app/build/reports/tests/testDebugUnitTest/
             app/build/test-results/testDebugUnitTest/TEST-*.xml
             app/build/reports/lint-results-debug.*
+            app/build/reports/lint-results-release.*

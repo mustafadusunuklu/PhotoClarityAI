@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.photoclarity.ai.core.media.PhotoAccessManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 
 data class DashboardUiState(
     val storageInfo: StorageInfo? = null,
@@ -24,18 +27,22 @@ data class DashboardUiState(
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
     private val photoRepository: PhotoRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val photoAccess: PhotoAccessManager? = null
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
 
+    private var loadJob: Job? = null
     init {
-        loadDashboardData()
+        if (photoAccess == null) loadDashboardData()
+        else viewModelScope.launch { photoAccess.state.collect { loadDashboardData() } }
     }
 
     fun loadDashboardData() {
-        viewModelScope.launch {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             try {
                 val storageInfo = photoRepository.getStorageInfo()
@@ -47,9 +54,11 @@ class DashboardViewModel @Inject constructor(
                     hasPreviousScanResults = previousGroups.isNotEmpty(),
                     lastScanGroupCount = previousGroups.size
                 )
-            } catch (e: Exception) {
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
+                    storageInfo = null, hasPreviousScanResults = false, lastScanGroupCount = 0,
                     error = "Depolama bilgisi alınamadı: ${e.message}"
                 )
             }

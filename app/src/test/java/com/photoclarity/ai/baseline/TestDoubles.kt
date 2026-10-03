@@ -38,7 +38,11 @@ internal class FakePhotoRepository : PhotoRepository {
     override var removalMode = PhotoRepository.RemovalMode.PERMANENT_DELETE
     var result: PhotoRepository.DeleteResult = PhotoRepository.DeleteResult.Success(emptySet())
     var verified = PhotoRepository.DeleteResult.Success(emptySet())
-    override suspend fun verifyTrashedPhotos(uris: List<Uri>) = verified
+    val verificationRequests = mutableListOf<List<Uri>>()
+    override suspend fun verifyTrashedPhotos(uris: List<Uri>): PhotoRepository.DeleteResult.Success {
+        verificationRequests += uris.toList()
+        return verified
+    }
     val requests = mutableListOf<List<Uri>>()
     override suspend fun deletePhotos(uris: List<Uri>): PhotoRepository.DeleteResult {
         requests += uris.toList()

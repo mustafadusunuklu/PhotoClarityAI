@@ -32,7 +32,10 @@ fun DeleteConfirmDialog(
         text = {
             Text(
                 text = if (useSystemTrash) "$photoCount fotoğraf ($totalSizeLabel) cihazın sistem çöp kutusuna taşınacak. " +
-                        "Sonraki ekranda sistem onayı gerekir. Geri yükleme, saklama süresi ve kalıcı silme sistem veya galeri uygulaması tarafından yönetilir. PhotoClarityAI süre veya geri yükleme garantisi vermez."
+                        "Sonraki ekranda sistem onayı gerekir. " +
+                        (if (photoCount > com.photoclarity.ai.core.media.RemovalBatchPolicy.MAX_TRASH_URIS)
+                            "İşlem ${com.photoclarity.ai.core.media.RemovalBatchPolicy.count(photoCount)} bölüme ayrılır; her bölüm ayrı sistem onayı ister. İptal, tamamlanan bölümleri geri almaz. " else "") +
+                        "Geri yükleme, saklama süresi ve kalıcı silme sistem veya galeri uygulaması tarafından yönetilir. PhotoClarityAI süre veya geri yükleme garantisi vermez."
                     else "$photoCount fotoğraf ($totalSizeLabel) kalıcı olarak silinecek. Bu cihazda sistem çöp kutusu kullanılamıyor. Bu işlem geri alınamaz. Fotoğrafları kontrol ederek onaylayın.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

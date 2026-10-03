@@ -16,6 +16,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import com.photoclarity.ai.core.media.PhotoAccessManager
+import com.photoclarity.ai.core.media.PhotoAccess
+import com.photoclarity.ai.core.media.RemovalBatchPolicy
 
 private fun sizeLabel(bytes: Long): String = when {
     bytes < 1024 * 1024 -> "${bytes / 1024} KB"
@@ -33,7 +36,9 @@ data class ResultsUiState(
     val lastDeletedCount: Int = 0,
     val removalMode: PhotoRepository.RemovalMode = PhotoRepository.RemovalMode.PERMANENT_DELETE,
     val waitingForLegacyWritePermission: Boolean = false,
-    val confirmationPhotos: List<Photo>? = null
+    val confirmationPhotos: List<Photo>? = null,
+    val consentBatch: Int = 0,
+    val consentBatchCount: Int = 0
 ) {
     val selectedPhotoCount get() = selectedPhotoIds.size
     val selectedSizeLabel get() = sizeLabel(groups.flatMap { it.photos }
@@ -46,16 +51,45 @@ data class ResultsUiState(
 class ResultsViewModel @Inject constructor(
     private val photoRepository: PhotoRepository,
     private val settingsRepository: SettingsRepository,
-    val qualityScorer: QualityScorer
+    val qualityScorer: QualityScorer,
+    private val photoAccess: PhotoAccessManager? = null
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(ResultsUiState(
-        groups = ScanResultHolder.groups, removalMode = photoRepository.removalMode))
+        groups = if (photoAccess?.state?.value?.access == PhotoAccess.DENIED) emptyList() else ScanResultHolder.groups,
+        error = ScanResultHolder.error ?: if (photoAccess?.state?.value?.access == PhotoAccess.DENIED)
+            "Fotoğraf erişimi yok. İzin vererek yeniden tarayın." else null,
+        removalMode = photoRepository.removalMode))
     val uiState = _uiState.asStateFlow()
     private var snapshot: List<Photo>? = null
     private var pending: PhotoRepository.DeleteResult.RequiresPermission? = null
     private val completed = mutableSetOf<Uri>()
     private val failures = mutableSetOf<Uri>()
     private val grantedRetries = mutableSetOf<Uri>()
+    private var accessInvalidated = false
+    private var accessRevision = ScanResultHolder.accessRevision ?: photoAccess?.state?.value?.revision
+
+    init {
+        photoAccess?.let { manager ->
+            viewModelScope.launch {
+                manager.state.collect { state ->
+                    if (state.revision != accessRevision || state.error != null) {
+                        accessRevision = state.revision
+                        accessInvalidated = true
+                        if (!_uiState.value.isLoading) invalidateAccess()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun invalidateAccess() {
+        val message = "Fotoğraf erişimi değişti veya doğrulanamadı. Güncel erişimle yeniden tarayın."
+        ScanResultHolder.groups = emptyList()
+        ScanResultHolder.error = message
+        ScanResultHolder.accessRevision = accessRevision
+        _uiState.value = _uiState.value.copy(groups = emptyList(), selectedPhotoIds = emptySet(),
+            confirmationPhotos = null, waitingForLegacyWritePermission = false, error = message)
+    }
 
     private fun selectableIds(): Set<Long> {
         val protected = _uiState.value.groups.map { it.recommendedKeepId }.toSet()
@@ -115,7 +149,9 @@ class ResultsViewModel @Inject constructor(
         snapshot = photos.toList()
         completed.clear(); failures.clear(); grantedRetries.clear()
         _uiState.value = _uiState.value.copy(isLoading = true, confirmationPhotos = null,
-            lastDeletedCount = 0, error = null, message = null)
+            lastDeletedCount = 0, error = null, message = null, consentBatch = 0,
+            consentBatchCount = if (_uiState.value.removalMode == PhotoRepository.RemovalMode.SYSTEM_TRASH)
+                RemovalBatchPolicy.count(photos.size) else 0)
         viewModelScope.launch { runRemoval(photos.map { it.contentUri }) }
     }
 
@@ -132,8 +168,10 @@ class ResultsViewModel @Inject constructor(
                         failures.addAll(result.retryUris)
                         finish("Sistem izni sonrasında silme tamamlanamadı.")
                     } else {
-                        pending = result.copy(retryUris = result.retryUris.toList())
-                        _uiState.value = _uiState.value.copy(pendingDeleteIntentSender = result.intentSender)
+                        pending = result.copy(retryUris = result.retryUris.toList(),
+                            trashUris = result.trashUris.toList(), remainingTrashUris = result.remainingTrashUris.toList())
+                        _uiState.value = _uiState.value.copy(pendingDeleteIntentSender = result.intentSender,
+                            consentBatch = _uiState.value.consentBatch + if (result.retryUris.isEmpty()) 1 else 0)
                     }
                 }
                 is PhotoRepository.DeleteResult.Error -> finish(result.message)
@@ -164,9 +202,13 @@ class ResultsViewModel @Inject constructor(
                 runRemoval(request.retryUris)
             } else {
                 try {
-                    val verified = photoRepository.verifyTrashedPhotos(snapshot.orEmpty().map { it.contentUri })
+                    val batch = request.trashUris.ifEmpty { snapshot.orEmpty().map { it.contentUri } }
+                    val verified = photoRepository.verifyTrashedPhotos(batch)
                     completed.addAll(verified.removedUris); failures.addAll(verified.failedUris)
-                    finish()
+                    if (accessInvalidated) finish("Fotoğraf erişimi değişti. Kalan bölümler işlenmedi; yeniden tarayın.")
+                    else if (verified.failedUris.isNotEmpty()) finish("Bu bölümde bazı fotoğraflar doğrulanamadı. Kalan bölümler işlenmedi; yeniden tarayın.")
+                    else if (request.remainingTrashUris.isNotEmpty()) runRemoval(request.remainingTrashUris)
+                    else finish()
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) { finish("Çöp kutusuna taşıma doğrulanamadı. Yeniden tarayın.") }
             }
@@ -209,6 +251,7 @@ class ResultsViewModel @Inject constructor(
             }
         }
         _uiState.value = _uiState.value.copy(isLoading = false)
+        if (accessInvalidated) invalidateAccess()
     }
 
     fun getGroupById(groupId: String): DuplicateGroup? = _uiState.value.groups.firstOrNull { it.id == groupId }

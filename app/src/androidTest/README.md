@@ -1,4 +1,12 @@
-# Phase 1 device acceptance tests
+# Device acceptance tests
+
+Phase 2 adds `Phase2DeviceAcceptanceTest` for the installed target API, FULL access/insets and the actual DataStore file path with recreation, LIMITED labelling with recreation, and DENIED scanner/count fail-closed behavior. Run its individual methods with grants preset **outside** instrumentation; revoking this package's permission during instrumentation can kill the test process. Record and restore the original grants. `pm grant READ_MEDIA_VISUAL_USER_SELECTED` covers the OS grant branch but does not prove a human picker selection or its exact accessible URI set. The API 26–36/OEM matrix, real picker reselection/revocation and cloud/D2D restore remain explicit acceptance items in `docs/PHASE2_PLATFORM_REPORT.md`. The three basic checks do not read or mutate photo bytes; production Dashboard count and permission ID refresh queries still run.
+
+`Phase2BatchDeviceTest` creates 2,002 app-owned synthetic PNG rows, protects one keeper, approves the first 2,000 candidates via real system consent, and cancels the remaining one via a second real system consent. The actual repository and ResultsViewModel reconcile all URI states and protect stats. Its small Compose host launches ActivityResult consent without composing thousands of current result cards: this is not proof of large-gallery ResultsScreen performance. Cleanup checks each exact URI's unique display-name prefix and app owner before removal; it never cleans gallery-wide. Run only on a dedicated test emulator with FULL read access; the suite must print its synthetic cleanup count. Source generator only; generated media and APKs remain outside Git.
+
+After the batch run, `Phase2DeviceAcceptanceTest#batchFixtureCleanupIncludesTrashedRows` performs a read-only app-owner/test-prefix audit with `QUERY_ARG_MATCH_TRASHED=MATCH_INCLUDE`. A normal empty query excludes trash and does not prove cleanup. This additional check creates/removes no media.
+
+## Phase 1 safety regression suite
 
 `safety/Phase1DeviceAcceptanceTest.kt` runs on API 30+. It uses ActivityScenario, real Compose screens, UiAutomation, ActivityResult, MediaStore, Android codecs and an isolated in-memory Room cache. Existing Espresso 3.6.1 uses a removed hidden input API on API 37, so these tests do not use Espresso or Compose test rules. Runtime dependencies and SDK versions are unchanged.
 

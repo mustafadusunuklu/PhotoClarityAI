@@ -54,6 +54,7 @@ class MediaStoreScanner @Inject constructor(
         minSizeBytes: Long = 10 * 1024,
         selectedFolders: Set<String> = emptySet()
     ): List<Photo> = withContext(Dispatchers.IO) {
+        PhotoAccessManager.requireAccess(context)
         val photos = mutableListOf<Photo>()
 
         // Build the WHERE clause dynamically
@@ -66,7 +67,7 @@ class MediaStoreScanner @Inject constructor(
             selection,
             selectionArgs,
             sortOrder
-        )?.use { cursor ->
+        ).let { it ?: throw IllegalStateException("Fotoğraf listesi okunamadı; boş galeri olarak kabul edilmedi.") }.use { cursor ->
             val idCol       = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val nameCol     = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
             val mimeCol     = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
@@ -136,6 +137,7 @@ class MediaStoreScanner @Inject constructor(
      * Get all distinct buckets (folders) on the device.
      */
     suspend fun getAllBuckets(): Map<Long, String> = withContext(Dispatchers.IO) {
+        PhotoAccessManager.requireAccess(context)
         val buckets = mutableMapOf<Long, String>()
         val bucketProjection = arrayOf(
             MediaStore.Images.Media.BUCKET_ID,
@@ -147,7 +149,7 @@ class MediaStoreScanner @Inject constructor(
             bucketProjection,
             null, null,
             "${MediaStore.Images.Media.BUCKET_DISPLAY_NAME} ASC"
-        )?.use { cursor ->
+        ).let { it ?: throw IllegalStateException("Klasör listesi okunamadı.") }.use { cursor ->
             val idCol   = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
             while (cursor.moveToNext()) {
@@ -164,10 +166,11 @@ class MediaStoreScanner @Inject constructor(
      * Get total photo count (no size filter so the number matches the gallery).
      */
     suspend fun getPhotoCount(): Int = withContext(Dispatchers.IO) {
+        PhotoAccessManager.requireAccess(context)
         context.contentResolver.query(
             collection,
             arrayOf(MediaStore.Images.Media._ID),
             null, null, null
-        )?.use { it.count } ?: 0
+        ).let { it ?: throw IllegalStateException("Fotoğraf sayısı okunamadı.") }.use { it.count }
     }
 }

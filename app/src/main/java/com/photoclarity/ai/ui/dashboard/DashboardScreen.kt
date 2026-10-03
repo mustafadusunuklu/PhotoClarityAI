@@ -241,7 +241,8 @@ fun DashboardScreen(
                         )
                     }
                     Text(
-                        text  = "Toplam ${uiState.storageInfo?.totalPhotoCount ?: 0} fotoğraf analiz hazır.",
+                        text  = if (uiState.storageInfo == null) "Fotoğraf sayısı doğrulanamadı. Erişimi kontrol edin."
+                            else "Erişilebilen ${uiState.storageInfo?.totalPhotoCount} fotoğraf. Tarama, ayarlardaki kapsamı kullanır.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

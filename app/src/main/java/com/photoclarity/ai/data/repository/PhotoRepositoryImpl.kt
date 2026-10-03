@@ -5,6 +5,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
 import com.photoclarity.ai.core.media.MediaRemovalPlatform
+import com.photoclarity.ai.core.media.RemovalBatchPolicy
 import com.photoclarity.ai.core.media.MediaStoreScanner
 import com.photoclarity.ai.core.util.StorageUtils
 import com.photoclarity.ai.domain.model.Photo
@@ -55,8 +56,11 @@ class PhotoRepositoryImpl @Inject constructor(
             if (snapshot.isEmpty()) return@withContext PhotoRepository.DeleteResult.Success(emptySet())
             if (removalMode == PhotoRepository.RemovalMode.SYSTEM_TRASH) {
                 try {
+                    val batch = snapshot.take(RemovalBatchPolicy.MAX_TRASH_URIS)
                     PhotoRepository.DeleteResult.RequiresPermission(
-                        removalPlatform.createTrashPrompt(snapshot)
+                        removalPlatform.createTrashPrompt(batch),
+                        trashUris = batch,
+                        remainingTrashUris = snapshot.drop(batch.size)
                     )
                 } catch (e: CancellationException) { throw e }
                 catch (e: Exception) {

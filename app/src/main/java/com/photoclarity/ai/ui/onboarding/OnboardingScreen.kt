@@ -1,9 +1,5 @@
 package com.photoclarity.ai.ui.onboarding
 
-import android.Manifest
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
@@ -30,6 +26,8 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.photoclarity.ai.ui.components.GradientButton
+import com.photoclarity.ai.ui.components.LocalPhotoAccess
+import com.photoclarity.ai.core.media.PhotoAccess
 import com.photoclarity.ai.ui.theme.*
 
 private data class OnboardingPage(
@@ -77,18 +75,9 @@ fun OnboardingScreen(
         viewModel.goToPage(pagerState.currentPage)
     }
 
-    val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        arrayOf(Manifest.permission.READ_MEDIA_IMAGES)
-    } else {
-        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        if (results.values.any { it }) {
-            onPermissionsGranted()
-        }
+    val access = LocalPhotoAccess.current
+    LaunchedEffect(access.snapshot.access) {
+        if (access.snapshot.access != PhotoAccess.DENIED) onPermissionsGranted()
     }
 
     Box(
@@ -242,7 +231,7 @@ fun OnboardingScreen(
             // CTA Button
             GradientButton(
                 text = "İzinlere Devam Et  →",
-                onClick = { permissionLauncher.launch(permissions) },
+                onClick = access.request,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)

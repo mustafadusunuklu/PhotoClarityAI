@@ -1,10 +1,23 @@
 package com.photoclarity.ai
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.*
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.photoclarity.ai.core.media.PhotoAccess
+import com.photoclarity.ai.core.media.PhotoAccessManager
+import com.photoclarity.ai.ui.components.LocalPhotoAccess
+import com.photoclarity.ai.ui.components.PhotoAccessBanner
+import com.photoclarity.ai.ui.components.PhotoAccessUi
+import com.photoclarity.ai.ui.scan.ScanResultHolder
+import javax.inject.Inject
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,6 +39,24 @@ import kotlinx.coroutines.launch
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+    @Inject lateinit var photoAccess: PhotoAccessManager
+    private val photoPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        photoAccess.refresh(this, selectionMayHaveChanged = true)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        photoAccess.refresh(this)
+    }
+
+    private fun requestPhotoAccess() {
+        if (photoAccess.state.value.needsSettings || photoAccess.state.value.access == PhotoAccess.FULL) {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        } else {
+            photoAccess.markRequested()
+            photoPermissionRequest.launch(PhotoAccessManager.permissions())
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -34,6 +65,14 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             PhotoClarityTheme(darkTheme = true) {
+                val access by photoAccess.state.collectAsStateWithLifecycle()
+                LaunchedEffect(access.revision, access.error) {
+                    if (ScanResultHolder.accessRevision != null &&
+                        (ScanResultHolder.accessRevision != access.revision || access.error != null)) {
+                        ScanResultHolder.groups = emptyList()
+                        ScanResultHolder.error = "Fotoğraf erişimi değişti. Güncel erişimle yeniden tarayın."
+                    }
+                }
                 val navController = rememberNavController()
                 val drawerState   = rememberDrawerState(DrawerValue.Closed)
                 val scope         = rememberCoroutineScope()
@@ -47,7 +86,7 @@ class MainActivity : ComponentActivity() {
                 )
 
                 val startDestination = remember {
-                    if (hasStoragePermission()) Screen.Dashboard.route
+                    if (access.access != PhotoAccess.DENIED) Screen.Dashboard.route
                     else Screen.Onboarding.route
                 }
 
@@ -85,22 +124,23 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 ) {
-                    PhotoClarityNavGraph(
-                        navController    = navController,
-                        startDestination = startDestination,
-                        onOpenDrawer     = openDrawer,
-                        onNavigate       = { route -> navigateTo(route) }
-                    )
+                    CompositionLocalProvider(LocalPhotoAccess provides PhotoAccessUi(access, ::requestPhotoAccess)) {
+                        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)
+                            .consumeWindowInsets(WindowInsets.safeDrawing)) {
+                            PhotoAccessBanner()
+                            Box(Modifier.weight(1f)) {
+                                PhotoClarityNavGraph(
+                                    navController = navController,
+                                    startDestination = startDestination,
+                                    onOpenDrawer = openDrawer,
+                                    onNavigate = { route -> navigateTo(route) }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 
-    private fun hasStoragePermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
-        } else {
-            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-        }
-    }
 }
