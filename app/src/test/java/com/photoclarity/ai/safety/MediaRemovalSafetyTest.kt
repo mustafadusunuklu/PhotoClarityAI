@@ -71,11 +71,17 @@ class MediaRemovalSafetyTest {
     @Test fun trashVerificationFailsClosedForUnknownAndUnchangedRows(): Unit = runBlocking {
         `when`(platform.mode).thenReturn(PhotoRepository.RemovalMode.SYSTEM_TRASH)
         val a = uri("1"); val b = uri("2"); val c = uri("3")
-        `when`(platform.isTrashed(a)).thenReturn(true)
-        `when`(platform.isTrashed(b)).thenReturn(false)
-        `when`(platform.isTrashed(c)).thenThrow(SecurityException("denied"))
+        `when`(platform.trashedUris(listOf(a,b,c))).thenReturn(setOf(a))
         val result = repo.verifyTrashedPhotos(listOf(a,b,c))
         assertEquals(setOf(a),result.removedUris); assertEquals(setOf(b,c),result.failedUris)
+    }
+    @Test fun failedTrashBatchCannotBeReportedAsRemoved(): Unit = runBlocking {
+        `when`(platform.mode).thenReturn(PhotoRepository.RemovalMode.SYSTEM_TRASH)
+        val a = uri("1"); val b = uri("2")
+        `when`(platform.trashedUris(listOf(a,b))).thenThrow(SecurityException("denied"))
+        val result = repo.verifyTrashedPhotos(listOf(a,b))
+        assertTrue(result.removedUris.isEmpty()); assertEquals(setOf(a,b), result.failedUris)
+        verifyNoInteractions(resolver)
     }
     @Test fun perItemConsentReturnsCompletedAndFrozenRemainingUris(): Unit = runBlocking {
         val a = uri("1"); val b = uri("2"); val c = uri("3")

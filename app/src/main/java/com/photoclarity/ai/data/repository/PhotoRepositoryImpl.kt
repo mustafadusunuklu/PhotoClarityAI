@@ -28,25 +28,52 @@ class PhotoRepositoryImpl @Inject constructor(
     override suspend fun arePhotosCurrent(photos: List<Photo>): Boolean = withContext(Dispatchers.IO) {
         com.photoclarity.ai.core.media.PhotoAccessManager.requireAccess(context)
         val versions = mutableMapOf<String, String>()
-        photos.distinctBy { it.contentUri }.all { photo ->
-            kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            val uri = photo.contentUri
-            if (uri.scheme != "content" || uri.authority != MediaStore.AUTHORITY || uri.lastPathSegment?.toLongOrNull() != photo.id) false
-            else if (android.os.Build.VERSION.SDK_INT >= 30 && photo.mediaStoreVersion != null &&
-                versions.getOrPut(uri.pathSegments.first()) { MediaStore.getVersion(context, uri.pathSegments.first()) } != photo.mediaStoreVersion) false
-            else context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.SIZE,
-                MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.MIME_TYPE,
-                MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT) +
-                (if (android.os.Build.VERSION.SDK_INT >= 30 && photo.generationModified != null) arrayOf(MediaStore.MediaColumns.GENERATION_MODIFIED) else emptyArray()), null, null, null)?.use { row ->
-                row.moveToFirst() && row.getLong(0) == photo.id && row.getLong(1) == photo.sizeBytes && row.getLong(2) == photo.dateModified &&
-                    row.getLong(3) == photo.dateAdded && row.getString(4) == photo.mimeType && row.getInt(5) == photo.width && row.getInt(6) == photo.height &&
-                    (photo.generationModified == null || row.getLong(7) == photo.generationModified)
-            } ?: false
+        val catalogue = photos.distinctBy { it.contentUri }
+        if (catalogue.any { photo ->
+                val uri = photo.contentUri
+                uri.scheme != "content" || uri.authority != MediaStore.AUTHORITY || uri.pathSegments.size != 4 ||
+                    uri.pathSegments[1] != "images" || uri.pathSegments[2] != "media" ||
+                    uri.lastPathSegment?.toLongOrNull()?.takeIf { it > 0 } != photo.id
+            }) return@withContext false
+        val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.SIZE,
+            MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.MIME_TYPE,
+            MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT) +
+            (if (android.os.Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.MediaColumns.GENERATION_MODIFIED) else emptyArray())
+        for ((collection, members) in catalogue.groupBy { it.contentUri.toString().substringBeforeLast('/') }) {
+            val volume = members.first().contentUri.pathSegments.first()
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                val version = versions.getOrPut(volume) { MediaStore.getVersion(context, volume) }
+                if (members.any { it.mediaStoreVersion != null && it.mediaStoreVersion != version }) return@withContext false
+            }
+            for (batch in members.chunked(com.photoclarity.ai.domain.model.AnalysisVersion.CACHE_BATCH)) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val expected = batch.associateBy { it.id }
+                val seen = HashSet<Long>()
+                val selection = "${MediaStore.MediaColumns._ID} IN (${batch.joinToString(",") { "?" }})"
+                val cursor = context.contentResolver.query(Uri.parse(collection), projection, selection,
+                    batch.map { it.id.toString() }.toTypedArray(), null) ?: return@withContext false
+                cursor.use { row ->
+                    while (row.moveToNext()) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        val id = row.getLong(0)
+                        val photo = expected[id] ?: return@withContext false
+                        if (!seen.add(id) || row.getLong(1) != photo.sizeBytes || row.getLong(2) != photo.dateModified ||
+                            row.getLong(3) != photo.dateAdded || row.getString(4) != photo.mimeType || row.getInt(5) != photo.width ||
+                            row.getInt(6) != photo.height || (photo.generationModified != null && (row.isNull(7) || row.getLong(7) != photo.generationModified)))
+                            return@withContext false
+                    }
+                }
+                if (seen.size != expected.size) return@withContext false
+            }
         }
+        true
     }
 
     override suspend fun loadAllPhotos(selectedFolders: Set<String>): List<Photo> =
         scanner.scanAllPhotos(selectedFolders = selectedFolders)
+
+    override fun loadPhotoPages(settings: com.photoclarity.ai.domain.model.ScanSettings) =
+        scanner.scanPhotoPages(settings.minFileSizeBytes, settings.selectedFolders)
 
     override suspend fun loadPhotosFromBucket(bucketId: Long): List<Photo> =
         scanner.scanAllPhotos().filter { it.bucketId == bucketId }
@@ -115,12 +142,9 @@ class PhotoRepositoryImpl @Inject constructor(
         withContext(Dispatchers.IO) {
             val removed = mutableSetOf<Uri>()
             if (removalMode == PhotoRepository.RemovalMode.SYSTEM_TRASH) {
-                for (uri in uris.distinct()) {
-                    try {
-                        if (removalPlatform.isTrashed(uri)) removed.add(uri)
-                    } catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { /* Unknown state is not success. */ }
-                }
+                try { removed.addAll(removalPlatform.trashedUris(uris.distinct()).intersect(uris.toSet())) }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { /* Unknown state is not success. */ }
             }
             PhotoRepository.DeleteResult.Success(removed, uris.toSet() - removed)
         }

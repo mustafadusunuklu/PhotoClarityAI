@@ -50,6 +50,8 @@ class ScanCoordinator @Inject constructor(
             try {
                 sessions.initialize()
                 removal.recover()
+                sessions.state.value.session?.takeIf { it.status == SessionStatus.COMPLETED && it.analysisVersion != AnalysisVersion.CURRENT }
+                    ?.let { sessions.invalidate(SessionError.ANALYSIS_VERSION_CHANGED) }
                 initialized = true
                 restoreScanState()
                 access.state.collect { a ->
@@ -108,7 +110,12 @@ class ScanCoordinator @Inject constructor(
                 val current = ScanSession(id, clock.now(), scopeKey = checkNotNull(a.scopeKey), settings = config)
                 session = current; sessions.begin(current)
                 step(ScanStep.SCAN_FOLDERS, ScanStepStatus.StepStatus.IN_PROGRESS)
-                val catalog = photos.loadAllPhotos(config.selectedFolders)
+                val catalog = ArrayList<Photo>()
+                photos.loadPhotoPages(config).collect { page ->
+                    currentCoroutineContext().ensureActive()
+                    catalog.addAll(page)
+                    _state.value = _state.value.copy(totalPhotos = catalog.size)
+                }
                 currentCoroutineContext().ensureActive()
                 session = current.copy(discovered = catalog.size)
                 sessions.checkpoint(checkNotNull(session))
@@ -116,12 +123,18 @@ class ScanCoordinator @Inject constructor(
                 step(ScanStep.SCAN_FOLDERS, ScanStepStatus.StepStatus.DONE)
                 step(ScanStep.EXTRACT_METADATA, ScanStepStatus.StepStatus.DONE)
                 step(ScanStep.COMPUTE_SIMILARITY, ScanStepStatus.StepStatus.IN_PROGRESS)
-                step(ScanStep.MATCH_HASHES, ScanStepStatus.StepStatus.IN_PROGRESS)
                 val outcome = coroutineScope {
                     val progress = MutableSharedFlow<ScanProgress>(extraBufferCapacity = 64)
                     var lastCheckpoint = clock.elapsed()
                     val collector = launch(start = CoroutineStart.UNDISPATCHED) {
                         progress.collect { p ->
+                            if (p is ScanProgress.Stage) {
+                                _state.value = _state.value.copy(phase = p.phase)
+                                if (p.phase == ScanPhase.EXACT) {
+                                    step(ScanStep.COMPUTE_SIMILARITY, ScanStepStatus.StepStatus.DONE)
+                                    step(ScanStep.MATCH_HASHES, ScanStepStatus.StepStatus.IN_PROGRESS)
+                                }
+                            }
                             if (p is ScanProgress.Hashing) {
                                 val attempted = maxOf(_state.value.currentProgress, p.current)
                                 _state.value = _state.value.copy(currentProgress = attempted, currentPhotoName = p.currentPhotoName)
@@ -155,10 +168,17 @@ class ScanCoordinator @Inject constructor(
             session?.takeIf { it.id == id }?.let { sessions.complete(it.copy(status = status, endedAt = clock.now(),
                 durationMillis = (clock.elapsed() - startedElapsed).coerceAtLeast(0), error = error), emptyList()) }
         } catch (e: Exception) { /* Repository exposes a fail-closed storage error. */ }
-        _state.value = _state.value.copy(isScanning = false, isCancelled = error == SessionError.USER_CANCELLED,
+        _state.value = _state.value.copy(isScanning = false, isCancelling = false, isCancelled = error == SessionError.USER_CANCELLED,
             error = if (error == SessionError.USER_CANCELLED) null else if (session == null && error == SessionError.STORAGE)
                 "Tarama ayarları okunamadı. Tarama başlatılmadı." else SessionSnapshot(session = session?.copy(error = error)).errorMessage ?: "Tarama kesildi.")
     }
-    fun cancel(reason: SessionError = SessionError.USER_CANCELLED) { if (scanJob?.isActive == true) { cancelReason = reason; scanJob?.cancel() } }
+    fun cancel(reason: SessionError = SessionError.USER_CANCELLED) {
+        if (scanJob?.isActive == true) {
+            cancelReason = reason
+            // Immediate feedback; keep the operation gate locked until actual work terminates.
+            _state.value = _state.value.copy(isCancelling = true)
+            scanJob?.cancel()
+        }
+    }
     private fun step(step: ScanStep, status: ScanStepStatus.StepStatus) { _state.value = _state.value.copy(steps = _state.value.steps.map { if (it.step == step) it.copy(status = status) else it }) }
 }

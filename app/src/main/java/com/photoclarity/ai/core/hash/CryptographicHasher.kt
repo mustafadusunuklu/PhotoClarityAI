@@ -32,7 +32,12 @@ class CryptographicHasher @Inject constructor(private val context: Context) {
                 }
             }
             if (totalRead == 0L) return@withContext null
-            digest.digest().joinToString("") { "%02x".format(it) }
+            val alphabet = "0123456789abcdef"
+            val bytes = digest.digest()
+            CharArray(bytes.size * 2) { index ->
+                val byte = bytes[index / 2].toInt() and 255
+                alphabet[if (index % 2 == 0) byte ushr 4 else byte and 15]
+            }.concatToString()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

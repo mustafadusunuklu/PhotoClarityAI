@@ -72,7 +72,7 @@ Detaylar: [Faz 0 raporu](docs/PHASE0_BASELINE_REPORT.md), [benchmark planı](doc
 
 ## CI ve dosya güvenliği
 
-`.github/workflows/android-baseline.yml`: push/PR/manual, JDK 17, SDK 36, checksum kontrollü Wrapper, clean debug/test APK, unsigned release, en az 86 gerçek JVM testi, v1/v2 Room şemaları ve debug/release lint. GitHub Actions yalnız sonuç raporlarını yükler; signing/credential istemez. Yerel build ve workflow statik kontrolü, GitHub Actions run sonucunun yerine geçmez; ilgili commit'in run durumunu ayrıca doğrulayın.
+`.github/workflows/android-baseline.yml`: push/PR/manual, JDK 17, SDK 36, checksum kontrollü Wrapper, clean debug/test APK, unsigned release, en az 109 gerçek JVM testi, v1/v2/v3 Room şemaları ve debug/release lint. GitHub Actions yalnız sonuç raporlarını yükler; signing/credential istemez. Yerel build ve workflow statik kontrolü, GitHub Actions run sonucunun yerine geçmez; ilgili commit'in run durumunu ayrıca doğrulayın.
 
 `.gitignore` heap dump, `.baseline`, IDE, build/cache, makine SDK ayarı ve signing/credential dosyalarını dışlar. Ignore, dosyaların diskten silinmesi veya anonimleştirilmesi değildir. Mevcut 3.61 GiB heap dump korunur; içinde kullanıcı verisi bulunabilir. Yerel snapshot kaynaklar ve `local.properties` içerir, özel yedek olarak tutulmalıdır; paylaşmayın. Ignore, daha önce track edilmiş secret'ı geçmişten kaldırmaz; baseline geçmişinde böyle bir dosya tespit edilmedi. Genel anahtar sözcük taraması secret yokluğu garantisi değildir.
 
@@ -92,3 +92,10 @@ Mevcut README'deki takım atıfları korunmuştur:
 | Mehmet Arda Öztürk | Veri katmanı / repository | [ardaoztrk2](https://github.com/ardaoztrk2) |
 | Hakan Arslan | Analiz ve hash algoritmaları | [Hakanars](https://github.com/Hakanars) |
 | Gülizar Yıldırım | UI, ekranlar ve tasarım sistemi | — |
+
+
+## Faz 4 ölçek çalışması
+
+Pipeline sürümü 2, Room sürümü 3: eski cache migration sırasında korunur; yeni algoritma/generation/metadata kontratıyla doğrulanmadan kullanılmaz. Eski tamamlanmış sonuçlar yeniden tarama ister. Aynı pozitif dosya boyutu exact adaylarını daraltır; dört worker tek bounded decode'u hash/netlik arasında paylaşır. Metadata ve cache 256'lık batch'lerle, doğrulama sorguları volume/collection bazında işlenir. pHash 63 aktif bit, aHash/dHash 64 bit; exact Hamming indeksi ve keeper odaklı gruplama kullanılır. Ayrıntılı kararlar [Faz 4 tasarımında](docs/PHASE4_SCALE_DESIGN.md), ölçümler ve açık kabul kapıları [Faz 4 raporunda](docs/PHASE4_SCALE_REPORT.md).
+
+109 JVM testi önceki güvenlik kontratlarını ve yeni exhaustive oracle, DCT, cache/URI, decode bütçesi ve 20k ölçek kontrollerini içerir. Mevcut dikey sonuç/detay akışları üyeler bazında lazy çalışır; çok grup arasında gezinmenin ürün tasarımı ve erişilebilirlik/adaptive/review ilerleme gereksinimleri Faz 5'te tasarım kapısından geçecektir. Emülatör ve sentetik kalibrasyon, fiziksel cihaz/gerçek fotoğraf üretim kabulü yerine sayılmaz.

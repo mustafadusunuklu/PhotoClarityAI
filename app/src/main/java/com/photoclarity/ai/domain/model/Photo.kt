@@ -33,7 +33,7 @@ data class Photo(
     val generationModified: Long? = null,
     val mediaStoreVersion: String? = null
 ) {
-    val megapixels: Float get() = (width * height) / 1_000_000f
+    val megapixels: Float get() = (width.toLong() * height) / 1_000_000f
     val sizeKb: Long get() = sizeBytes / 1024
     val sizeMb: Float get() = sizeBytes / (1024f * 1024f)
     val aspectRatio: Float get() = if (height > 0) width.toFloat() / height else 1f

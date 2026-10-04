@@ -32,6 +32,7 @@ object SessionCodec {
         put("status", session.status.name); put("scope", session.scopeKey); put("discovered", session.discovered)
         put("attempted", session.attempted); put("failed", session.failed); put("matched", session.matched)
         put("failedKnown", session.failedKnown)
+        put("analysisVersion", session.analysisVersion)
         put("duration", session.durationMillis); put("error", session.error?.name ?: JSONObject.NULL)
         val s = session.settings
         put("settings", JSONObject().apply {
@@ -53,6 +54,6 @@ object SessionCodec {
                 s.getBoolean("smart"), s.getBoolean("burst"), s.getBoolean("low"),
                 (0 until folders.length()).map { folders.getString(it) }.toSet(), s.getLong("minSize")),
             o.getInt("discovered"), o.getInt("attempted"), o.getInt("failed"), o.getInt("matched"), o.getLong("duration"),
-            if (o.isNull("error")) null else SessionError.valueOf(o.getString("error")), o.optBoolean("failedKnown", false))
+            if (o.isNull("error")) null else SessionError.valueOf(o.getString("error")), o.optBoolean("failedKnown", false), o.optInt("analysisVersion", 0))
     }
 }

@@ -10,7 +10,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [HashCacheEntity::class, ScanSessionEntity::class, ScanGroupEntity::class, ScanMemberEntity::class,
         ScanSelectionEntity::class, RemovalRequestEntity::class, RemovalItemEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class PhotoClarityDatabase : RoomDatabase() {
@@ -18,6 +18,17 @@ abstract class PhotoClarityDatabase : RoomDatabase() {
     abstract fun scanSessionDao(): ScanSessionDao
 
     companion object {
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hash_cache ADD COLUMN algorithmVersion INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hash_cache ADD COLUMN generationModified INTEGER")
+                db.execSQL("ALTER TABLE hash_cache ADD COLUMN mediaStoreVersion TEXT")
+                db.execSQL("ALTER TABLE hash_cache ADD COLUMN dateAdded INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hash_cache ADD COLUMN width INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hash_cache ADD COLUMN height INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE hash_cache ADD COLUMN mimeType TEXT NOT NULL DEFAULT ''")
+            }
+        }
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("CREATE TABLE IF NOT EXISTS scan_sessions (id TEXT NOT NULL PRIMARY KEY, startedAt INTEGER NOT NULL, payload TEXT NOT NULL)")

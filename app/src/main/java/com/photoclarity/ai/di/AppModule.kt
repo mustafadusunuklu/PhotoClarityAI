@@ -8,7 +8,6 @@ import com.photoclarity.ai.core.analysis.QualityScorer
 import com.photoclarity.ai.core.hash.AverageHasher
 import com.photoclarity.ai.core.hash.CryptographicHasher
 import com.photoclarity.ai.core.hash.DifferenceHasher
-import com.photoclarity.ai.core.hash.HammingDistance
 import com.photoclarity.ai.core.hash.PerceptualHasher
 import com.photoclarity.ai.core.media.MediaStoreScanner
 import com.photoclarity.ai.core.util.BitmapUtils
@@ -45,7 +44,7 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): PhotoClarityDatabase =
         Room.databaseBuilder(context, PhotoClarityDatabase::class.java, "photoclarity.db")
-            .addMigrations(PhotoClarityDatabase.MIGRATION_1_2)
+            .addMigrations(PhotoClarityDatabase.MIGRATION_1_2, PhotoClarityDatabase.MIGRATION_2_3)
             .build()
 
     @Provides
@@ -91,10 +90,6 @@ object AppModule {
     fun provideDifferenceHasher(@ApplicationContext context: Context, bitmapUtils: BitmapUtils): DifferenceHasher =
         DifferenceHasher(context, bitmapUtils)
 
-    @Provides
-    @Singleton
-    fun provideHammingDistance(): HammingDistance = HammingDistance()
-
     // ─── Analysis ────────────────────────────────────────────────────────────
 
     @Provides
@@ -112,7 +107,6 @@ object AppModule {
         pHasher: PerceptualHasher,
         aHasher: AverageHasher,
         dHasher: DifferenceHasher,
-        hamming: HammingDistance,
         qualityScorer: QualityScorer,
         burstDetector: BurstDetector,
         bitmapUtils: BitmapUtils,
@@ -121,7 +115,7 @@ object AppModule {
         clock: SessionClock
     ): PhotoAnalyzer = PhotoAnalyzer(
         cryptoHasher, pHasher, aHasher, dHasher,
-        hamming, qualityScorer, burstDetector, bitmapUtils, hashCacheDao, dispatchers, clock
+        qualityScorer, burstDetector, bitmapUtils, hashCacheDao, dispatchers, clock
     )
 
     // ─── Media ───────────────────────────────────────────────────────────────

@@ -2,6 +2,8 @@ package com.photoclarity.ai.ui.results
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -17,6 +19,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.photoclarity.ai.ui.components.QualityChip
+import com.photoclarity.ai.domain.model.mediaKey
 import com.photoclarity.ai.ui.theme.Secondary
 import java.text.SimpleDateFormat
 import java.util.*
@@ -59,13 +62,11 @@ fun GroupDetailScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(16.dp)
         ) {
+            item(key = "summary", contentType = "summary") {
             // Similarity badge
             val similarityPercent = (group.similarityScore * 100).toInt()
             Surface(
@@ -74,7 +75,7 @@ fun GroupDetailScreen(
                 modifier = Modifier.padding(bottom = 16.dp)
             ) {
                 Text(
-                    text = if (group.groupType == com.photoclarity.ai.domain.model.DuplicateGroup.GroupType.LOW_QUALITY) "Tekil netlik önerisi — benzerlik veya silme önerisi değil" else "Benzerlik: %$similarityPercent | ${group.groupType.name.replace("_", " ")}",
+                    text = if (group.groupType == com.photoclarity.ai.domain.model.DuplicateGroup.GroupType.LOW_QUALITY) "Tekil netlik önerisi — benzerlik veya silme önerisi değil" else "Ortalama benzerlik: %$similarityPercent | ${group.groupType.name.replace("_", " ")}",
                     style = MaterialTheme.typography.labelMedium,
                     color = Secondary,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -82,9 +83,9 @@ fun GroupDetailScreen(
                 )
             }
 
-            // Photo comparison grid
-            group.photos.forEachIndexed { index, photo ->
-                val isRecommended = photo.id == group.recommendedKeepId
+            }
+            itemsIndexed(group.photos, key = { _, photo -> photo.mediaKey }, contentType = { _, _ -> "photo" }) { index, photo ->
+                val isRecommended = photo.mediaKey == group.recommendedPhoto?.mediaKey
 
                 Card(
                     modifier = Modifier

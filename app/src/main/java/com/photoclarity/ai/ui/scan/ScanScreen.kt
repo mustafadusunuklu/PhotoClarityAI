@@ -61,7 +61,7 @@ fun ScanScreen(
             // Title and progress text
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = if (uiState.isScanning) "Kütüphane Analiz Ediliyor" else "Tarama Durumu",
+                    text = if (uiState.isCancelling) "Tarama Durduruluyor" else if (uiState.isScanning) "Kütüphane Analiz Ediliyor" else "Tarama Durumu",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -71,7 +71,7 @@ fun ScanScreen(
                 Spacer(Modifier.height(8.dp))
 
                 AnimatedContent(
-                    targetState = "${uiState.currentProgress} / ${uiState.totalPhotos} fotoğraf analiz edildi...",
+                    targetState = "${uiState.phase.label}: ${uiState.currentProgress} / ${uiState.totalPhotos} fotoğraf",
                     transitionSpec = {
                         fadeIn() togetherWith fadeOut()
                     },
@@ -127,13 +127,14 @@ fun ScanScreen(
             // Cancel button
             OutlinedButton(
                 onClick = { if (uiState.isScanning) viewModel.cancelScan() else viewModel.startScan() },
+                enabled = !uiState.isCancelling,
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier
                     .fillMaxWidth(0.7f)
                     .height(48.dp)
             ) {
                 Text(
-                    text = if (uiState.isScanning) "Taramayı İptal Et" else "Taramayı Yeniden Başlat",
+                    text = if (uiState.isCancelling) "Durduruluyor..." else if (uiState.isScanning) "Taramayı İptal Et" else "Taramayı Yeniden Başlat",
                     style = MaterialTheme.typography.bodyLarge
                 )
             }

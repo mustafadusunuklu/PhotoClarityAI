@@ -86,13 +86,20 @@ internal class FakeHashCacheDao(entries: List<HashCacheEntity>) : HashCacheDao {
     private val cache = java.util.concurrent.ConcurrentHashMap(entries.associateBy { it.photoUri })
     private val writeCount = java.util.concurrent.atomic.AtomicInteger()
     val writes: Int get() = writeCount.get()
+    var readBatches = 0; private set
+    var writeBatches = 0; private set
+    override suspend fun getForUris(uris: List<String>): List<HashCacheEntity> { readBatches++; return uris.mapNotNull { cache[it] } }
     override suspend fun getValidCache(uri: String, lastModified: Long, fileSize: Long) =
         cache[uri]?.takeIf { it.lastModified == lastModified && it.fileSize == fileSize }
     override suspend fun getByMd5(hash: String) = cache.values.filter { it.md5Hash == hash }
     override suspend fun getBySha256(hash: String) = cache.values.filter { it.sha256Hash == hash }
     override suspend fun insertCache(entity: HashCacheEntity) { writeCount.incrementAndGet(); cache[entity.photoUri] = entity }
-    override suspend fun insertAllCache(entities: List<HashCacheEntity>) { entities.forEach { insertCache(it) } }
+    override suspend fun insertAllCache(entities: List<HashCacheEntity>) { writeBatches++; entities.forEach { insertCache(it) } }
     override suspend fun deleteByUri(uri: String) { cache.remove(uri) }
     override suspend fun deleteExpired(expiryTime: Long) { cache.entries.removeAll { it.value.cachedAt < expiryTime } }
     override suspend fun count() = cache.size
 }
+
+internal fun HashCacheEntity.currentFor(photo: Photo) = copy(algorithmVersion = AnalysisVersion.CURRENT,
+    generationModified = photo.generationModified, mediaStoreVersion = photo.mediaStoreVersion,
+    dateAdded = photo.dateAdded, width = photo.width, height = photo.height, mimeType = photo.mimeType)

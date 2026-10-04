@@ -4,6 +4,9 @@ import android.net.Uri
 import com.photoclarity.ai.domain.model.Photo
 import com.photoclarity.ai.domain.model.StorageInfo
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import com.photoclarity.ai.domain.model.ScanSettings
+import com.photoclarity.ai.domain.model.AnalysisVersion
 
 interface PhotoRepository {
     suspend fun arePhotosCurrent(photos: List<com.photoclarity.ai.domain.model.Photo>): Boolean {
@@ -14,6 +17,11 @@ interface PhotoRepository {
      * @param selectedFolders If non-empty, only photos from these bucket names are returned.
      */
     suspend fun loadAllPhotos(selectedFolders: Set<String> = emptySet()): List<Photo>
+
+    fun loadPhotoPages(settings: ScanSettings): Flow<List<Photo>> = flow {
+        loadAllPhotos(settings.selectedFolders)
+            .chunked(AnalysisVersion.CACHE_BATCH).forEach { emit(it) }
+    }
 
     /**
      * Load photos from a specific folder (bucketId).

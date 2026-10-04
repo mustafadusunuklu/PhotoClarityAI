@@ -5,6 +5,8 @@ import com.photoclarity.ai.data.local.db.entity.HashCacheEntity
 
 @Dao
 interface HashCacheDao {
+    @Query("SELECT * FROM hash_cache WHERE photoUri IN (:uris)")
+    suspend fun getForUris(uris: List<String>): List<HashCacheEntity>
 
     @Query("SELECT * FROM hash_cache WHERE photoUri = :uri AND lastModified = :lastModified AND fileSize = :fileSize LIMIT 1")
     suspend fun getValidCache(uri: String, lastModified: Long, fileSize: Long): HashCacheEntity?

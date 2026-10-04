@@ -10,6 +10,10 @@ import com.photoclarity.ai.core.util.StorageUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import com.photoclarity.ai.domain.model.AnalysisVersion
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -55,7 +59,18 @@ class MediaStoreScanner @Inject constructor(
     suspend fun scanAllPhotos(
         minSizeBytes: Long = 10 * 1024,
         selectedFolders: Set<String> = emptySet()
-    ): List<Photo> = withContext(Dispatchers.IO) {
+    ): List<Photo> {
+        val result = ArrayList<Photo>()
+        scanPhotoPages(minSizeBytes, selectedFolders).collect { result.addAll(it) }
+        return result
+    }
+
+    /** Cursor stays on IO; only bounded metadata pages cross the coroutine boundary. */
+    fun scanPhotoPages(
+        minSizeBytes: Long = 10 * 1024,
+        selectedFolders: Set<String> = emptySet()
+    ): Flow<List<Photo>> = flow {
+        require(minSizeBytes >= 0)
         PhotoAccessManager.requireAccess(context)
         val photos = mutableListOf<Photo>()
         val versions = mutableMapOf<String, String>()
@@ -116,11 +131,15 @@ class MediaStoreScanner @Inject constructor(
                         mediaStoreVersion = version
                     )
                 )
+                if (photos.size == AnalysisVersion.CACHE_BATCH) {
+                    emit(photos.toList())
+                    photos.clear()
+                }
             }
         }
 
-        photos
-    }
+        if (photos.isNotEmpty()) emit(photos.toList())
+    }.flowOn(Dispatchers.IO)
 
     /**
      * Builds a parameterised SQL selection clause.

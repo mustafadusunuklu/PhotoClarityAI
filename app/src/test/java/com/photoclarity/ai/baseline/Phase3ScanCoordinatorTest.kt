@@ -54,6 +54,23 @@ class Phase3ScanCoordinatorTest {
         assertNotNull(c.state.value.error)
         assertEquals(0, analyses); assertFalse(gate.busy())
     }
+    @Test fun oldAnalysisVersionCannotRestoreTrustedResults() = runTest {
+        val legacy = ScanSession("old-analysis", 1, scopeKey = "FULL", settings = ScanSettings(), analysisVersion = 0)
+        sessions.begin(legacy); sessions.complete(legacy.copy(status = SessionStatus.COMPLETED), listOf(group()))
+        coordinator(); advanceUntilIdle()
+        assertEquals(SessionStatus.STALE, sessions.state.value.session?.status)
+        assertEquals(SessionError.ANALYSIS_VERSION_CHANGED, sessions.state.value.session?.error)
+        assertFalse(sessions.state.value.trusted); assertTrue(sessions.state.value.visibleGroups.isEmpty())
+        assertEquals(0, repo.loadCount)
+    }
+    @Test fun progressPhaseDoesNotTurnAttemptedCountIntoComparisonCount() = runTest {
+        repo.catalog = listOf(photo(1))
+        engine = ScanAnalysisEngine { _, _, p -> p.emit(ScanProgress.Hashing(1, 1, "fixture")); p.emit(ScanProgress.Stage(ScanPhase.VISUAL)); awaitCancellation() }
+        val c = coordinator(); advanceUntilIdle(); c.start(); runCurrent()
+        assertEquals(ScanPhase.VISUAL, c.state.value.phase)
+        assertEquals(1, c.state.value.currentProgress)
+        c.cancel(); advanceUntilIdle()
+    }
     @Test fun oneScanSurvivesDifferentViewModelsAndRejectsDuplicateStart() = runTest {
         repo.catalog = group().photos; engine = ScanAnalysisEngine { _, _, _ -> awaitCancellation() }
         val c = coordinator(); advanceUntilIdle()
@@ -122,7 +139,8 @@ class Phase3ScanCoordinatorTest {
     @Test fun immediateCancellationReleasesOwnerBeforeQueuedWorkRuns() = runTest {
         engine = ScanAnalysisEngine { _, _, _ -> awaitCancellation() }
         val c = coordinator(); advanceUntilIdle()
-        assertTrue(c.start()); c.cancel(); advanceUntilIdle()
+        assertTrue(c.start()); c.cancel(); assertTrue(c.state.value.isCancelling); advanceUntilIdle()
+        assertFalse(c.state.value.isCancelling)
         assertFalse(gate.busy()); assertFalse(c.state.value.isScanning)
         assertEquals(SessionStatus.CANCELLED, sessions.state.value.session?.status)
     }

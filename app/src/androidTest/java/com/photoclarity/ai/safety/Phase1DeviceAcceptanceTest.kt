@@ -370,7 +370,7 @@ class Phase1DeviceAcceptanceTest {
         val db = Room.inMemoryDatabaseBuilder(context,PhotoClarityDatabase::class.java).build()
         val bitmap = BitmapUtils(context)
         val analyzer = PhotoAnalyzer(CryptographicHasher(context),PerceptualHasher(context,bitmap),
-            AverageHasher(context,bitmap),DifferenceHasher(context,bitmap),HammingDistance(),
+            AverageHasher(context,bitmap),DifferenceHasher(context,bitmap),
             QualityScorer(),BurstDetector(),bitmap,db.hashCacheDao())
         try {
             val groups = runBlocking { analyzer.analyze(photos,

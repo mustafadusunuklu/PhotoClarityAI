@@ -23,4 +23,8 @@ interface ScanSessionDao {
     @Query("DELETE FROM removal_items") suspend fun clearItems()
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun request(row: RemovalRequestEntity)
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun items(rows: List<RemovalItemEntity>)
+    @Query("UPDATE removal_items SET issued = 0 WHERE requestId = :id AND issued = 1") suspend fun clearIssued(id: String)
+    @Query("UPDATE removal_items SET issued = 1 WHERE requestId = :id AND mediaKey IN (:keys)") suspend fun markIssued(id: String, keys: List<String>)
+    @Query("UPDATE removal_items SET removed = 1 WHERE requestId = :id AND mediaKey IN (:keys)") suspend fun markRemoved(id: String, keys: List<String>)
+    @Query("UPDATE removal_items SET failed = 1 WHERE requestId = :id AND mediaKey IN (:keys)") suspend fun markFailed(id: String, keys: List<String>)
 }

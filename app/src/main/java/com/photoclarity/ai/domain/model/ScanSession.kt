@@ -3,7 +3,7 @@ package com.photoclarity.ai.domain.model
 import com.photoclarity.ai.domain.repository.PhotoRepository
 
 enum class SessionStatus { RUNNING, COMPLETED, CANCELLED, INTERRUPTED, FAILED, STALE }
-enum class SessionError { ACCESS_CHANGED, MEDIA_CHANGED, MEDIA_UNREADABLE, STORAGE, ANALYSIS, BACKGROUND, PROCESS_INTERRUPTED, USER_CANCELLED }
+enum class SessionError { ACCESS_CHANGED, MEDIA_CHANGED, MEDIA_UNREADABLE, STORAGE, ANALYSIS, ANALYSIS_VERSION_CHANGED, BACKGROUND, PROCESS_INTERRUPTED, USER_CANCELLED }
 
 data class ScanSession(
     val id: String,
@@ -18,7 +18,8 @@ data class ScanSession(
     val matched: Int = 0,
     val durationMillis: Long = 0,
     val error: SessionError? = null,
-    val failedKnown: Boolean = false
+    val failedKnown: Boolean = false,
+    val analysisVersion: Int = AnalysisVersion.CURRENT
 )
 
 enum class RemovalStatus { PREPARED, APPLYING, WAITING_SYSTEM, RECONCILING, FINISHED }
@@ -55,6 +56,7 @@ data class SessionSnapshot(
         SessionError.USER_CANCELLED -> "Tarama iptal edildi; tamamlanmış sonuç yok."
         SessionError.STORAGE -> "Tarama verileri kaydedilemedi. Yeniden deneyin."
         SessionError.ANALYSIS -> "Tarama tamamlanamadı. Yeniden deneyin."
+        SessionError.ANALYSIS_VERSION_CHANGED -> "Analiz yöntemi güncellendi. Eski sonuçlarla işlem yapmadan yeniden tarayın."
         null -> null
     }
 }
@@ -75,5 +77,5 @@ fun reconcileGroups(groups: List<DuplicateGroup>, removed: Set<String>): List<Du
     val remaining = group.photos.filter { it.mediaKey !in removed }
     if (group.groupType == DuplicateGroup.GroupType.LOW_QUALITY) group.takeIf { remaining.isNotEmpty() }
     else if (remaining.size < 2) null
-    else group.copy(photos = remaining, totalWasteBytes = remaining.filter { it.id != group.recommendedKeepId }.sumOf { it.sizeBytes })
+    else group.copy(photos = remaining, totalWasteBytes = remaining.filter { it.mediaKey != group.recommendedPhoto?.mediaKey }.sumOf { it.sizeBytes })
 }

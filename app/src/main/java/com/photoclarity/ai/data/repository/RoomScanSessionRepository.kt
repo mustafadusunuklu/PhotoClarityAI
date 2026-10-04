@@ -75,10 +75,26 @@ class RoomScanSessionRepository @Inject constructor(private val db: PhotoClarity
         }
     }
     private suspend fun saveJournal(r: RemovalJournal) {
-        dao.clearRequests(); dao.clearItems()
+        val previous = _state.value.removal?.takeIf { it.id == r.id }
+        if (previous == null) {
+            dao.clearRequests(); dao.clearItems()
+            dao.items(r.photos.mapIndexed { index, p -> RemovalItemEntity(r.id, p.mediaKey, index, SessionCodec.photo(p),
+                p.mediaKey in r.issuedKeys, p.mediaKey in r.removedKeys, p.mediaKey in r.failedKeys) })
+        } else {
+            // Frozen payload is immutable. Only batch flags change after an external effect.
+            check(previous.sessionId == r.sessionId && previous.mode == r.mode && previous.photos.size == r.photos.size)
+            check(previous.photos === r.photos || previous.photos.zip(r.photos).all { (old, fresh) ->
+                old == fresh || SessionCodec.photo(old) == SessionCodec.photo(fresh)
+            })
+            check(r.removedKeys.containsAll(previous.removedKeys) && r.failedKeys.containsAll(previous.failedKeys))
+            if (previous.issuedKeys != r.issuedKeys) {
+                dao.clearIssued(r.id)
+                r.issuedKeys.chunked(AnalysisVersion.CACHE_BATCH).forEach { dao.markIssued(r.id, it) }
+            }
+            (r.removedKeys - previous.removedKeys).chunked(AnalysisVersion.CACHE_BATCH).forEach { dao.markRemoved(r.id, it) }
+            (r.failedKeys - previous.failedKeys).chunked(AnalysisVersion.CACHE_BATCH).forEach { dao.markFailed(r.id, it) }
+        }
         dao.request(RemovalRequestEntity(r.id, r.sessionId, r.createdAt, r.mode.name, r.status.name, r.error))
-        dao.items(r.photos.mapIndexed { index, p -> RemovalItemEntity(r.id, p.mediaKey, index, SessionCodec.photo(p),
-            p.mediaKey in r.issuedKeys, p.mediaKey in r.removedKeys, p.mediaKey in r.failedKeys) })
     }
     override suspend fun journal(request: RemovalJournal) = write(reloadFindings = false, update = { it.copy(removal = request) }) {
         val current = _state.value.removal

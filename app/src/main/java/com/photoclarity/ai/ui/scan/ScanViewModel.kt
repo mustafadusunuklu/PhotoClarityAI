@@ -11,9 +11,11 @@ data class ScanUiState(
     val currentProgress: Int = 0, val totalPhotos: Int = 0, val currentPhotoName: String = "",
     val steps: List<ScanStepStatus> = ScanStep.values().map { ScanStepStatus(it) },
     val isCancelled: Boolean = false, val error: String? = null,
-    val results: List<DuplicateGroup> = emptyList(), val sessionId: String? = null, val failedPhotos: Int = 0
+    val results: List<DuplicateGroup> = emptyList(), val sessionId: String? = null, val failedPhotos: Int = 0,
+    val phase: ScanPhase = ScanPhase.METADATA, val isCancelling: Boolean = false
 ) {
-    val progressFraction get() = if (totalPhotos > 0) (currentProgress.toFloat() / totalPhotos).coerceIn(0f, 1f) else -1f
+    val progressFraction get() = if (scanFinished) 1f else if (phase == ScanPhase.HASHING && totalPhotos > 0)
+        (currentProgress.toFloat() / totalPhotos).coerceIn(0f, 1f) else -1f
     val isCompleted get() = scanFinished || isCancelled || error != null
     val hasResults get() = results.isNotEmpty()
 }

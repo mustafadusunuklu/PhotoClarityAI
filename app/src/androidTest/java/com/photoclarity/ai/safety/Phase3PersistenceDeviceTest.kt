@@ -33,7 +33,7 @@ class Phase3PersistenceDeviceTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val preferenceFile get() = File(context.cacheDir, "$dbName.preferences_pb")
     private fun open(): PhotoClarityDatabase = Room.databaseBuilder(context, PhotoClarityDatabase::class.java, dbName)
-        .addMigrations(PhotoClarityDatabase.MIGRATION_1_2).build().also { db = it }
+        .addMigrations(PhotoClarityDatabase.MIGRATION_1_2, PhotoClarityDatabase.MIGRATION_2_3).build().also { db = it }
     private fun group(): DuplicateGroup {
         val photos = (9001L..9003L).map { id ->
             val uri = Uri.parse("content://media/external/images/media/$id")
@@ -58,6 +58,7 @@ class Phase3PersistenceDeviceTest {
         val database = open()
         assertEquals(1, database.hashCacheDao().count())
         assertEquals("old-sha", database.hashCacheDao().getValidCache("content://media/external/images/media/9001", 101, 12420)?.sha256Hash)
+        assertEquals(0, database.hashCacheDao().getForUris(listOf("content://media/external/images/media/9001")).single().algorithmVersion)
         assertEquals(oldSettings, settings.getScanSettings().firstValue())
         assertEquals(1234L, settings.getCleanedBytesThisMonth())
     }
@@ -111,6 +112,8 @@ class Phase3PersistenceDeviceTest {
     @Test fun codecRetainsSettingsSnapshotWithoutPhotoBytesOrGps() {
         val session = ScanSession("codec-session", 100, scopeKey = "LIMITED:test-fingerprint", settings = ScanSettings(selectedFolders = setOf("A", "B"), minFileSizeBytes = 999))
         assertEquals(session, SessionCodec.session(SessionCodec.session(session)))
+        val legacy = org.json.JSONObject(SessionCodec.session(session)).apply { remove("analysisVersion") }.toString()
+        assertEquals(0, SessionCodec.session(legacy).analysisVersion)
         val photo = group().photos.first()
         val restored = SessionCodec.photo(SessionCodec.photo(photo))
         assertEquals(photo.mediaKey, restored.mediaKey); assertEquals(photo.dateModified, restored.dateModified)

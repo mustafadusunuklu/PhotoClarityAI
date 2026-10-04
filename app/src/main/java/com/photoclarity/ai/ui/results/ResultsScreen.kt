@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.photoclarity.ai.core.analysis.QualityScorer
+import com.photoclarity.ai.domain.model.mediaKey
 import com.photoclarity.ai.ui.components.*
 import com.photoclarity.ai.ui.theme.DeleteRed
 import com.photoclarity.ai.ui.theme.GradientEnd
@@ -186,10 +187,8 @@ fun ResultsScreen(
                     }
                 }
 
-                itemsIndexed(
-                    items = uiState.groups,
-                    key = { _, group -> group.id }
-                ) { index, group ->
+                uiState.groups.forEachIndexed { index, group ->
+                    item(key = "header:${group.id}", contentType = "group_header") {
                     // Group header
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -223,17 +222,20 @@ fun ResultsScreen(
                         }
                     }
 
-                    Spacer(Modifier.height(8.dp))
-
-                    PhotoGroupCard(
-                        group = group,
-                        selectedPhotoIds = uiState.selectedPhotoIds,
-                        onPhotoSelectionChanged = { photoId, selected ->
-                            viewModel.togglePhotoSelection(photoId, selected)
-                        },
-                        qualityScorer = viewModel.qualityScorer,
-                        selectionEnabled = !uiState.selectionLocked
-                    )
+                    if (group.groupType == com.photoclarity.ai.domain.model.DuplicateGroup.GroupType.LOW_QUALITY) {
+                        Text("Netlik önerisi; benzerlik veya silme önerisi değildir. Galerinizde inceleyin.")
+                    }
+                    }
+                    itemsIndexed(group.photos, key = { _, photo -> "photo:${group.id}:${photo.mediaKey}" }, contentType = { _, _ -> "photo" }) { _, photo ->
+                        val keeper = photo.mediaKey == group.recommendedPhoto?.mediaKey
+                        PhotoCard(
+                            photo = photo, isSelected = photo.id in uiState.selectedPhotoIds,
+                            isRecommended = keeper, qualityScorer = viewModel.qualityScorer,
+                            selectionEnabled = !uiState.selectionLocked && !keeper && group.recommendedPhoto != null &&
+                                group.groupType != com.photoclarity.ai.domain.model.DuplicateGroup.GroupType.LOW_QUALITY,
+                            onSelectionChanged = { viewModel.togglePhotoSelection(photo.id, it) }
+                        )
+                    }
                 }
             }
         }

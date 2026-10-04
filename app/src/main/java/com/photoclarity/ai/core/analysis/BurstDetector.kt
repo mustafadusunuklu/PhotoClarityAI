@@ -22,25 +22,27 @@ class BurstDetector @Inject constructor() {
         private const val MIN_BURST_SIZE = 3
     }
 
-    fun detectBursts(photos: List<Photo>): List<List<Photo>> {
+    fun detectBursts(photos: List<Photo>, checkCancelled: () -> Unit = {}): List<List<Photo>> {
         if (photos.isEmpty()) return emptyList()
 
         // Group by bucket, then sort by date taken within each bucket
         val byBucket = photos
             .filter { it.dateTaken != null }
-            .groupBy { it.bucketId }
+            .groupBy { it.contentUri.toString().substringBeforeLast('/') to it.bucketId }
 
         val bursts = mutableListOf<List<Photo>>()
 
         for ((_, bucketPhotos) in byBucket) {
+            checkCancelled()
             val sorted = bucketPhotos.sortedBy { it.dateTaken }
             val currentBurst = mutableListOf<Photo>()
 
             for (photo in sorted) {
+                checkCancelled()
                 if (currentBurst.isEmpty()) {
                     currentBurst.add(photo)
                 } else {
-                    val lastTaken = currentBurst.last().dateTaken ?: continue
+                    val lastTaken = currentBurst.first().dateTaken ?: continue
                     val thisTaken = photo.dateTaken ?: continue
                     if (abs(thisTaken - lastTaken) <= BURST_WINDOW_MS) {
                         currentBurst.add(photo)

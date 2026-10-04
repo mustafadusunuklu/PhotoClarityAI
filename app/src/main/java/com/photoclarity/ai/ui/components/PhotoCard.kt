@@ -18,63 +18,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.photoclarity.ai.core.analysis.QualityScorer
-import com.photoclarity.ai.domain.model.DuplicateGroup
 import com.photoclarity.ai.domain.model.Photo
 import com.photoclarity.ai.ui.theme.*
 import java.text.SimpleDateFormat
 import java.util.*
-
-@Composable
-fun PhotoGroupCard(
-    group: DuplicateGroup,
-    selectedPhotoIds: Set<Long>,
-    onPhotoSelectionChanged: (Long, Boolean) -> Unit,
-    qualityScorer: QualityScorer,
-    selectionEnabled: Boolean = true,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            if (group.groupType == DuplicateGroup.GroupType.LOW_QUALITY) {
-                Text("Netlik önerisi; benzerlik veya silme önerisi değildir. Galerinizde inceleyin.",
-                    style = MaterialTheme.typography.bodyMedium)
-            }
-            // Group photos
-            group.photos.forEachIndexed { index, photo ->
-                val isSelected = photo.id in selectedPhotoIds
-                val isRecommended = photo.id == group.recommendedKeepId
-
-                PhotoCard(
-                    photo = photo,
-                    isSelected = isSelected,
-                    isRecommended = isRecommended,
-                    qualityScorer = qualityScorer,
-                    selectionEnabled = selectionEnabled && !isRecommended &&
-                        group.recommendedPhoto != null && group.groupType != DuplicateGroup.GroupType.LOW_QUALITY,
-                    onSelectionChanged = { selected ->
-                        onPhotoSelectionChanged(photo.id, selected)
-                    }
-                )
-
-                if (index < group.photos.size - 1) {
-                    Spacer(Modifier.height(8.dp))
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                        thickness = 0.5.dp
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-        }
-    }
-}
 
 @Composable
 fun PhotoCard(

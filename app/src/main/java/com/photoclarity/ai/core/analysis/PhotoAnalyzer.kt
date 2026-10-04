@@ -1,380 +1,200 @@
 package com.photoclarity.ai.core.analysis
 
-import com.photoclarity.ai.core.hash.AverageHasher
-import com.photoclarity.ai.core.hash.CryptographicHasher
-import com.photoclarity.ai.core.hash.DifferenceHasher
-import com.photoclarity.ai.core.hash.HammingDistance
-import com.photoclarity.ai.core.hash.PerceptualHasher
+import com.photoclarity.ai.core.hash.*
+import com.photoclarity.ai.core.session.SessionClock
+import com.photoclarity.ai.core.session.SessionDispatchers
 import com.photoclarity.ai.core.util.BitmapUtils
 import com.photoclarity.ai.data.local.db.HashCacheDao
 import com.photoclarity.ai.data.local.db.entity.HashCacheEntity
-import com.photoclarity.ai.domain.model.DuplicateGroup
-import com.photoclarity.ai.domain.model.HashAlgorithm
-import com.photoclarity.ai.domain.model.Photo
-import com.photoclarity.ai.domain.model.ScanProgress
-import com.photoclarity.ai.domain.model.ScanSettings
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
+import com.photoclarity.ai.domain.model.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.coroutines.coroutineContext
-import com.photoclarity.ai.core.session.SessionDispatchers
-import com.photoclarity.ai.core.session.SessionClock
 
-data class AnalysisOutcome(val groups: List<DuplicateGroup>, val attempted: Int, val failed: Int)
+data class AnalysisMetrics(
+    val hashingMillis: Long = 0, val exactMillis: Long = 0, val visualMillis: Long = 0, val burstMillis: Long = 0,
+    val cacheReadBatches: Int = 0, val cacheRowsWritten: Int = 0, val fullFileHashRequests: Int = 0,
+    val decodeRequests: Int = 0, val peakWorkers: Int = 0, val uniqueIndexNodes: Int = 0,
+    val visualComparisons: Long = 0, val bucketLookups: Long = 0
+)
+data class AnalysisOutcome(val groups: List<DuplicateGroup>, val attempted: Int, val failed: Int, val metrics: AnalysisMetrics = AnalysisMetrics())
 
 @Singleton
 class PhotoAnalyzer @Inject constructor(
-    private val cryptoHasher: CryptographicHasher,
-    private val pHasher: PerceptualHasher,
-    private val aHasher: AverageHasher,
-    private val dHasher: DifferenceHasher,
-    private val hammingDistance: HammingDistance,
+    private val cryptoHasher: CryptographicHasher, private val pHasher: PerceptualHasher,
+    private val aHasher: AverageHasher, private val dHasher: DifferenceHasher,
     private val qualityScorer: QualityScorer,
-    private val burstDetector: BurstDetector,
-    private val bitmapUtils: BitmapUtils,
-    private val hashCacheDao: HashCacheDao,
-    private val runtime: SessionDispatchers = SessionDispatchers(),
+    private val burstDetector: BurstDetector, private val bitmapUtils: BitmapUtils,
+    private val hashCacheDao: HashCacheDao, private val runtime: SessionDispatchers = SessionDispatchers(),
     private val clock: SessionClock = SessionClock()
 ) {
-    companion object {
-        /** Parallel coroutines used for hash computation. */
-        private const val PARALLEL_JOBS = 4
-        /** Sharpness score (normalised 0–1) below which a photo is flagged as low quality. */
-        private const val LOW_QUALITY_SHARPNESS_THRESHOLD = 0.10f
-        /** Hash cache max age: 30 days in milliseconds. */
-        private const val CACHE_MAX_AGE_MS = 30L * 24 * 60 * 60 * 1000
+    private data class Computed(val photo: Photo, val entry: HashCacheEntity?, val failed: Boolean)
+    private class Work {
+        val fullReads = AtomicInteger(); val decodes = AtomicInteger(); val active = AtomicInteger(); val peak = AtomicInteger()
+        var batches = 0; var writes = 0
     }
-
-    /**
-     * Full analysis pipeline:
-     * 1. Compute hashes (cryptographic + perceptual), using the local Room cache when possible
-     * 2. Find exact duplicates (same hash)
-     * 3. Find near-duplicates (Hamming distance within threshold)
-     * 4. Detect burst shots
-     * 5. Detect low-quality photos (when enabled)
-     * 6. Sort groups by descending reclaim size
-     */
-    suspend fun analyze(
-        photos: List<Photo>,
-        settings: ScanSettings,
-        progress: MutableSharedFlow<ScanProgress>
-    ): List<DuplicateGroup> = analyzeDetailed(photos, settings, progress).groups
+    suspend fun analyze(photos: List<Photo>, settings: ScanSettings, progress: MutableSharedFlow<ScanProgress>) =
+        analyzeDetailed(photos, settings, progress).groups
 
     suspend fun analyzeDetailed(photos: List<Photo>, settings: ScanSettings, progress: MutableSharedFlow<ScanProgress>): AnalysisOutcome = withContext(runtime.compute) {
-
-        if (photos.isEmpty()) return@withContext AnalysisOutcome(emptyList(), 0, 0)
-
-        // Evict stale cache entries once per run
-        withContext(runtime.io) {
-            hashCacheDao.deleteExpired(clock.now() - CACHE_MAX_AGE_MS)
-        }
-
-        progress.emit(ScanProgress.Hashing(0, photos.size, ""))
-
-        // ── Stage 1: Compute / retrieve hashes ───────────────────────────────
-        val analyzed = computeHashesInParallel(photos, settings, progress)
-        val failed = analyzed.count { photo -> photo.sharpnessScore < 0f ||
-            (settings.exactMatchEnabled && (if (settings.hashAlgorithm == HashAlgorithm.SHA256) photo.sha256Hash else photo.md5Hash) == null) ||
-            (settings.visualSimilarityEnabled && when (settings.visualHashAlgorithm) {
-                HashAlgorithm.PHASH -> photo.pHash == null
-                HashAlgorithm.AHASH -> photo.aHash == null
-                HashAlgorithm.DHASH -> photo.dHash == null
-                else -> true
-            }) }
-        val hashedPhotos = analyzed.filter { it.sharpnessScore >= 0f }
-
-        if (!coroutineContext.isActive) {
-            progress.emit(ScanProgress.Cancelled)
-            coroutineContext.ensureActive()
-        }
-
-        progress.emit(ScanProgress.Comparing(0, hashedPhotos.size))
-
-        val groups = mutableListOf<DuplicateGroup>()
-        val processedIds = mutableSetOf<Long>()
-
-        // ── Stage 2: Exact duplicates ────────────────────────────────────────
+        require(settings.similarityThreshold.isFinite() && settings.similarityThreshold in 0f..1f)
+        val catalogue = photos.distinctBy { it.mediaKey }
+        if (catalogue.isEmpty()) return@withContext AnalysisOutcome(emptyList(), 0, 0)
+        val job = currentCoroutineContext()
+        withContext(runtime.io) { hashCacheDao.deleteExpired(clock.now() - 30L * 24 * 60 * 60 * 1000) }
+        val sizes = catalogue.groupingBy { it.sizeBytes }.eachCount()
+        val burstCandidates = if (settings.detectBurstShots) burstDetector.detectBursts(catalogue) { job.ensureActive() }.flatten().map { it.mediaKey }.toSet() else emptySet()
+        val work = Work()
+        progress.emit(ScanProgress.Stage(ScanPhase.HASHING))
+        progress.emit(ScanProgress.Hashing(0, catalogue.size, ""))
+        val start = clock.elapsed()
+        val analyzed = computeBatches(catalogue, settings, sizes, burstCandidates, progress, work)
+        val hashMillis = clock.elapsed() - start
+        val available = analyzed.filter { it.photo.sharpnessScore >= 0f }.map { it.photo }
+        val groups = ArrayList<DuplicateGroup>()
+        val used = HashSet<String>()
+        progress.emit(ScanProgress.Stage(ScanPhase.EXACT))
+        val exactStart = clock.elapsed()
         if (settings.exactMatchEnabled) {
-            val exactGroups = findExactDuplicates(hashedPhotos, settings)
-            groups.addAll(exactGroups)
-            exactGroups.forEach { g -> g.photos.forEach { processedIds.add(it.id) } }
+            available.filter { it.sizeBytes > 0 }.groupBy { it.sizeBytes to cryptoHash(it, settings) }
+                .filterKeys { it.second != null }.values.forEach { members ->
+                    job.ensureActive()
+                    if (members.size >= 2) groups.add(group(members, DuplicateGroup.GroupType.EXACT_DUPLICATE, 1f))
+                }
+            groups.forEach { it.photos.forEach { photo -> used.add(photo.mediaKey) } }
         }
-
-        // ── Stage 3: Near-duplicates (visual similarity) ─────────────────────
-        if (settings.visualSimilarityEnabled) {
-            val remaining = hashedPhotos.filter { it.id !in processedIds }
-            val nearGroups = findNearDuplicates(remaining, settings)
-            groups.addAll(nearGroups)
-            nearGroups.forEach { g -> g.photos.forEach { processedIds.add(it.id) } }
-        }
-
-        // ── Stage 4: Burst detection ─────────────────────────────────────────
-        if (settings.detectBurstShots) {
-            val remaining = hashedPhotos.filter { it.id !in processedIds }
-            val burstGroups = burstDetector.detectBursts(remaining).map { burst ->
-                val bestId = qualityScorer.selectBest(burst).id
-                DuplicateGroup(
-                    id = UUID.randomUUID().toString(),
-                    photos = burst,
-                    groupType = DuplicateGroup.GroupType.BURST_SHOT,
-                    similarityScore = 0.95f,
-                    recommendedKeepId = bestId,
-                    totalWasteBytes = burst.filter { it.id != bestId }.sumOf { it.sizeBytes }
-                )
-            }
-            groups.addAll(burstGroups)
-            burstGroups.forEach { g -> g.photos.forEach { processedIds.add(it.id) } }
-        }
-
-        // ── Stage 5: Low-quality detection ───────────────────────────────────
-        if (settings.detectLowQuality) {
-            val lowQuality = hashedPhotos
-                .filter { it.id !in processedIds }
-                .filter { (it.sharpnessScore / 1000f).coerceIn(0f, 1f) < LOW_QUALITY_SHARPNESS_THRESHOLD }
-
-            // Separate review suggestions; unrelated images never form a duplicate set.
-            lowQuality.filter { it.sharpnessScore >= 0f }.forEach { photo ->
-                groups.add(DuplicateGroup(
-                    id = UUID.randomUUID().toString(), photos = listOf(photo),
-                    groupType = DuplicateGroup.GroupType.LOW_QUALITY,
-                    similarityScore = 0f, recommendedKeepId = photo.id, totalWasteBytes = 0L
-                ))
+        val exactMillis = clock.elapsed() - exactStart
+        progress.emit(ScanProgress.Stage(ScanPhase.VISUAL))
+        progress.emit(ScanProgress.Comparing(0, available.size))
+        val visualStart = clock.elapsed()
+        var nodes = 0; var comparisons = 0L; var lookups = 0L
+        fun visualGroups(input: List<Photo>, type: DuplicateGroup.GroupType, minimum: Int = 2) {
+            val candidates = input.filter { informative(visualHash(it, settings), bits(settings)) }
+            val records = candidates.map { VisualRecord(it.mediaKey, checkNotNull(visualHash(it, settings)), it.qualityScore) }
+            val matched = KeeperMatcher.match(records, bits(settings), settings.similarityThreshold) { job.ensureActive() }
+            nodes += matched.metrics.uniqueHashes; comparisons += matched.metrics.comparisons; lookups += matched.metrics.bucketLookups
+            matched.groups.filter { it.size >= minimum }.forEach { indices ->
+                job.ensureActive()
+                val members = indices.map { candidates[it] }
+                val score = HammingIndex.meanSimilarity(members.map { checkNotNull(visualHash(it, settings)) }.toLongArray(), bits(settings)) { job.ensureActive() }
+                groups.add(group(members, type, score)); members.forEach { used.add(it.mediaKey) }
             }
         }
-
+        if (settings.visualSimilarityEnabled) visualGroups(available.filter { it.mediaKey !in used }, DuplicateGroup.GroupType.VISUAL_SIMILAR)
+        val visualMillis = clock.elapsed() - visualStart
+        progress.emit(ScanProgress.Comparing(available.size, available.size))
+        progress.emit(ScanProgress.Stage(ScanPhase.BURST))
+        val burstStart = clock.elapsed()
+        if (settings.detectBurstShots) burstDetector.detectBursts(available.filter { it.mediaKey !in used }) { job.ensureActive() }.forEach { burst ->
+            job.ensureActive(); visualGroups(burst, DuplicateGroup.GroupType.BURST_SHOT, 3)
+        }
+        val burstMillis = clock.elapsed() - burstStart
+        if (settings.detectLowQuality) available.filter { it.mediaKey !in used && it.sharpnessScore / 1000f < .10f }.forEach { photo ->
+            job.ensureActive(); groups.add(group(listOf(photo), DuplicateGroup.GroupType.LOW_QUALITY, 0f))
+        }
+        progress.emit(ScanProgress.Stage(ScanPhase.GROUPING))
         progress.emit(ScanProgress.Grouping(groups.size))
+        job.ensureActive()
         progress.emit(ScanProgress.Completed)
-
-        AnalysisOutcome(groups.sortedByDescending { it.totalWasteBytes }, photos.size, failed)
+        AnalysisOutcome(groups.sortedByDescending { it.totalWasteBytes }, catalogue.size, analyzed.count { it.failed },
+            AnalysisMetrics(hashMillis, exactMillis, visualMillis, burstMillis, work.batches, work.writes, work.fullReads.get(), work.decodes.get(), work.peak.get(), nodes, comparisons, lookups))
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Hash computation
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private suspend fun computeHashesInParallel(
-        photos: List<Photo>,
-        settings: ScanSettings,
-        progress: MutableSharedFlow<ScanProgress>
-    ): List<Photo> = coroutineScope {
-        val chunks = photos.chunked((photos.size / PARALLEL_JOBS).coerceAtLeast(1))
-        // AtomicInteger makes the counter safe across the 4 parallel coroutines
-        val done = AtomicInteger(0)
-
-        chunks.map { chunk ->
-            async(runtime.io) {
-                chunk.map { photo ->
-                    coroutineContext.ensureActive()
-                    val hashed = computeHashesForPhoto(photo, settings)
-                    val current = done.incrementAndGet()
-                    progress.emit(ScanProgress.Hashing(current, photos.size, photo.displayName))
-                    hashed
-                }
+    private suspend fun computeBatches(photos: List<Photo>, settings: ScanSettings, sizes: Map<Long, Int>, bursts: Set<String>, progress: MutableSharedFlow<ScanProgress>, work: Work): List<Computed> {
+        val output = ArrayList<Computed>(photos.size)
+        var done = 0
+        val progressLock = Mutex()
+        for (batch in photos.chunked(AnalysisVersion.CACHE_BATCH)) {
+            currentCoroutineContext().ensureActive()
+            val cache = withContext(runtime.io) { hashCacheDao.getForUris(batch.map { it.mediaKey }) }.associateBy { it.photoUri }
+            work.batches++
+            val next = AtomicInteger()
+            val computed = arrayOfNulls<Computed>(batch.size)
+            coroutineScope {
+                List(minOf(AnalysisVersion.WORKERS, batch.size)) {
+                    async(runtime.io) {
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val index = next.getAndIncrement()
+                            if (index >= batch.size) break
+                            val active = work.active.incrementAndGet(); work.peak.updateAndGet { maxOf(it, active) }
+                            try {
+                                val photo = batch[index]
+                                computed[index] = compute(photo, settings, cache[photo.mediaKey], photo.sizeBytes > 0 && (sizes[photo.sizeBytes] ?: 0) > 1, photo.mediaKey in bursts, work)
+                                progressLock.withLock { done++; progress.emit(ScanProgress.Hashing(done, photos.size, photo.displayName)) }
+                            } finally { work.active.decrementAndGet() }
+                        }
+                    }
+                }.awaitAll()
             }
-        }.awaitAll().flatten()
+            val ready = computed.map { checkNotNull(it) }
+            val writes = ready.mapNotNull { it.entry }
+            if (writes.isNotEmpty()) { withContext(runtime.io) { hashCacheDao.insertAllCache(writes) }; work.writes += writes.size }
+            output.addAll(ready)
+        }
+        return output
     }
 
-    /**
-     * Compute hashes for a single photo, consulting the Room cache first.
-     * On a cache hit all hash/quality values are read from DB instead of
-     * re-scanning the file — critical for large libraries.
-     */
-    private suspend fun computeHashesForPhoto(photo: Photo, settings: ScanSettings): Photo =
-        withContext(runtime.io) {
-            val uriString = photo.contentUri.toString()
-
-            // ── Cache lookup ──────────────────────────────────────────────────
-            val cached = hashCacheDao.getValidCache(uriString, photo.dateModified, photo.sizeBytes)
-            var result = if (cached != null) photo.copy(
-                md5Hash = cached.md5Hash, sha256Hash = cached.sha256Hash,
-                pHash = cached.pHash, aHash = cached.aHash, dHash = cached.dHash,
-                qualityScore = cached.qualityScore, sharpnessScore = cached.sharpnessScore
-            ) else photo.copy(md5Hash = null, sha256Hash = null, pHash = null, aHash = null, dHash = null)
-            // Old null-stream results must not survive in the cache.
-            result = result.copy(
-                md5Hash = result.md5Hash?.takeUnless { it == "d41d8cd98f00b204e9800998ecf8427e" },
-                sha256Hash = result.sha256Hash?.takeUnless { it == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }
-            )
-            val previous = result
-            if (settings.exactMatchEnabled) {
-                result = when {
-                    settings.hashAlgorithm == HashAlgorithm.SHA256 && result.sha256Hash == null ->
-                        result.copy(sha256Hash = cryptoHasher.computeSha256(photo.contentUri))
-                    settings.hashAlgorithm != HashAlgorithm.SHA256 && result.md5Hash == null ->
-                        result.copy(md5Hash = cryptoHasher.computeMd5(photo.contentUri))
-                    else -> result
-                }
-            }
-            if (settings.visualSimilarityEnabled) {
-                result = when {
-                    settings.visualHashAlgorithm == HashAlgorithm.PHASH && result.pHash == null ->
-                        result.copy(pHash = pHasher.computePHash(photo.contentUri))
-                    settings.visualHashAlgorithm == HashAlgorithm.AHASH && result.aHash == null ->
-                        result.copy(aHash = aHasher.computeAHash(photo.contentUri))
-                    settings.visualHashAlgorithm == HashAlgorithm.DHASH && result.dHash == null ->
-                        result.copy(dHash = dHasher.computeDHash(photo.contentUri))
-                    else -> result
-                }
-            }
-            // Legacy zero conflated failure with a flat image. Retry it; negative means unavailable.
-            if (cached == null || result.sharpnessScore <= 0f) {
-                val sharpness = try {
-                    val bitmap = bitmapUtils.decodeSampledBitmap(photo.contentUri, 256, 256)
-                    if (bitmap == null) -1f else try {
-                        bitmapUtils.computeSharpness(bitmap)
-                    } finally { bitmap.recycle() }
-                } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { -1f }
-                result = result.copy(sharpnessScore = sharpness)
-                result = result.copy(qualityScore = qualityScorer.score(result))
-            }
-            if (cached != null && result == previous &&
-                cached.md5Hash == result.md5Hash && cached.sha256Hash == result.sha256Hash) {
-                return@withContext result
-            }
-
-            // ── Persist to cache ──────────────────────────────────────────────
-            hashCacheDao.insertCache(
-                HashCacheEntity(
-                    photoUri       = uriString,
-                    md5Hash        = result.md5Hash,
-                    sha256Hash     = result.sha256Hash,
-                    pHash          = result.pHash,
-                    aHash          = result.aHash,
-                    dHash          = result.dHash,
-                    qualityScore   = result.qualityScore,
-                    sharpnessScore = result.sharpnessScore,
-                    lastModified   = photo.dateModified,
-                    fileSize       = photo.sizeBytes
-                )
-            )
-
-            result
+    private suspend fun compute(photo: Photo, settings: ScanSettings, cachedRow: HashCacheEntity?, sizeCandidate: Boolean, burstCandidate: Boolean, work: Work): Computed {
+        val exact = settings.exactMatchEnabled && sizeCandidate
+        val visual = settings.visualSimilarityEnabled || (settings.detectBurstShots && burstCandidate)
+        if (!exact && !visual && !settings.detectLowQuality) return Computed(photo, null, false)
+        val cached = cachedRow?.takeIf { HashCachePolicy.valid(it, photo) }
+        var result = if (cached == null) photo.copy(md5Hash = null, sha256Hash = null, pHash = null, aHash = null, dHash = null, sharpnessScore = -1f)
+        else photo.copy(md5Hash = cached.md5Hash, sha256Hash = cached.sha256Hash, pHash = cached.pHash, aHash = cached.aHash, dHash = cached.dHash, qualityScore = cached.qualityScore, sharpnessScore = cached.sharpnessScore)
+        result = result.copy(md5Hash = result.md5Hash?.takeUnless { it == "d41d8cd98f00b204e9800998ecf8427e" }, sha256Hash = result.sha256Hash?.takeUnless { it == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" })
+        if (exact && cryptoHash(result, settings) == null) {
+            work.fullReads.incrementAndGet()
+            result = if (settings.hashAlgorithm == HashAlgorithm.SHA256) result.copy(sha256Hash = cryptoHasher.computeSha256(photo.contentUri))
+            else result.copy(md5Hash = cryptoHasher.computeMd5(photo.contentUri))
         }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Grouping logic
-    // ─────────────────────────────────────────────────────────────────────────
-
-    private fun findExactDuplicates(photos: List<Photo>, settings: ScanSettings): List<DuplicateGroup> {
-        val hashToPhotos = mutableMapOf<String, MutableList<Photo>>()
-
-        photos.forEach { photo ->
-            val hash = when (settings.hashAlgorithm) {
-                HashAlgorithm.SHA256 -> photo.sha256Hash
-                else                 -> photo.md5Hash
-            } ?: return@forEach
-
-            hashToPhotos.getOrPut(hash) { mutableListOf() }.add(photo)
+        val missingVisual = visual && visualHash(result, settings) == null
+        if (missingVisual || result.sharpnessScore < 0f) {
+            work.decodes.incrementAndGet()
+            val bitmap = bitmapUtils.decodeSampledBitmap(photo.contentUri, AnalysisVersion.DECODE_EDGE, AnalysisVersion.DECODE_EDGE)
+            if (bitmap != null) try {
+                result = withContext(runtime.compute) {
+                    var ready = result
+                    if (ready.sharpnessScore < 0f) {
+                        val sharpness = try { bitmapUtils.computeSharpness(bitmap) } catch (e: CancellationException) { throw e } catch (e: Exception) { -1f }
+                        ready = ready.copy(sharpnessScore = sharpness)
+                        ready = ready.copy(qualityScore = if (sharpness < 0f) 0f else qualityScorer.score(ready))
+                    }
+                    if (missingVisual) ready = when (settings.visualHashAlgorithm) {
+                        HashAlgorithm.PHASH -> ready.copy(pHash = pHasher.computeFromBitmap(bitmap))
+                        HashAlgorithm.AHASH -> ready.copy(aHash = aHasher.computeFromBitmap(bitmap))
+                        HashAlgorithm.DHASH -> ready.copy(dHash = dHasher.computeFromBitmap(bitmap))
+                        else -> ready
+                    }
+                    ready
+                }
+            } finally { bitmap.recycle() }
         }
-
-        return hashToPhotos.values
-            .filter { it.size >= 2 }
-            .map { group ->
-                val sorted = group.sortedByDescending { it.qualityScore }
-                DuplicateGroup(
-                    id               = UUID.randomUUID().toString(),
-                    photos           = sorted,
-                    groupType        = DuplicateGroup.GroupType.EXACT_DUPLICATE,
-                    similarityScore  = 1.0f,
-                    recommendedKeepId= sorted.first().id,
-                    totalWasteBytes  = sorted.drop(1).sumOf { it.sizeBytes }
-                )
-            }
+        currentCoroutineContext().ensureActive()
+        val failed = result.sharpnessScore < 0f || (exact && cryptoHash(result, settings) == null) || (visual && visualHash(result, settings) == null)
+        val entry = HashCachePolicy.entry(result, clock.now())
+        // Compare payload, not the timestamp: a valid complete warm row incurs no write.
+        val changed = cached == null || entry.copy(cachedAt = cached.cachedAt) != cached
+        return Computed(result, entry.takeIf { changed }, failed)
     }
 
-    private suspend fun findNearDuplicates(photos: List<Photo>, settings: ScanSettings): List<DuplicateGroup> {
-        // Union-Find for transitive grouping
-        val parent = IntArray(photos.size) { it }
-
-        fun find(x: Int): Int {
-            if (parent[x] != x) parent[x] = find(parent[x])
-            return parent[x]
-        }
-
-        fun union(x: Int, y: Int) {
-            parent[find(x)] = find(y)
-        }
-
-        for (i in photos.indices) {
-            coroutineContext.ensureActive()
-            for (j in i + 1 until photos.size) {
-                val a = photos[i]; val b = photos[j]
-                val similar = when (settings.visualHashAlgorithm) {
-                    HashAlgorithm.PHASH -> {
-                        val ha = a.pHash; val hb = b.pHash
-                        if (ha != null && hb != null) hammingDistance.isSimilar(ha, hb, settings.similarityThreshold) else false
-                    }
-                    HashAlgorithm.AHASH -> {
-                        val ha = a.aHash; val hb = b.aHash
-                        if (ha != null && hb != null) hammingDistance.isSimilar(ha, hb, settings.similarityThreshold) else false
-                    }
-                    HashAlgorithm.DHASH -> {
-                        val ha = a.dHash; val hb = b.dHash
-                        if (ha != null && hb != null) hammingDistance.isSimilar(ha, hb, settings.similarityThreshold) else false
-                    }
-                    else -> false
-                }
-                if (similar) union(i, j)
-            }
-        }
-
-        val groupMap = mutableMapOf<Int, MutableList<Photo>>()
-        photos.forEachIndexed { i, photo ->
-            groupMap.getOrPut(find(i)) { mutableListOf() }.add(photo)
-        }
-
-        return groupMap.values
-            .filter { it.size >= 2 }
-            .map { group ->
-                val sorted = group.sortedByDescending { it.qualityScore }
-                DuplicateGroup(
-                    id               = UUID.randomUUID().toString(),
-                    photos           = sorted,
-                    groupType        = DuplicateGroup.GroupType.VISUAL_SIMILAR,
-                    similarityScore  = computeGroupSimilarity(group, settings),
-                    recommendedKeepId= sorted.first().id,
-                    totalWasteBytes  = sorted.drop(1).sumOf { it.sizeBytes }
-                )
-            }
+    private fun cryptoHash(photo: Photo, settings: ScanSettings) = if (settings.hashAlgorithm == HashAlgorithm.SHA256) photo.sha256Hash else photo.md5Hash
+    private fun visualHash(photo: Photo, settings: ScanSettings) = when (settings.visualHashAlgorithm) {
+        HashAlgorithm.PHASH -> photo.pHash?.takeIf { it >= 0 }
+        HashAlgorithm.AHASH -> photo.aHash
+        HashAlgorithm.DHASH -> photo.dHash
+        else -> null
     }
-
-    private suspend fun computeGroupSimilarity(photos: List<Photo>, settings: ScanSettings): Float {
-        if (photos.size < 2) return 1f
-        var totalSim = 0f
-        var count = 0
-        for (i in photos.indices) {
-            coroutineContext.ensureActive()
-            for (j in i + 1 until photos.size) {
-                val sim = when (settings.visualHashAlgorithm) {
-                    HashAlgorithm.PHASH -> {
-                        val ha = photos[i].pHash; val hb = photos[j].pHash
-                        if (ha != null && hb != null) hammingDistance.similarity(ha, hb) else 0f
-                    }
-                    HashAlgorithm.AHASH -> {
-                        val ha = photos[i].aHash; val hb = photos[j].aHash
-                        if (ha != null && hb != null) hammingDistance.similarity(ha, hb) else 0f
-                    }
-                    HashAlgorithm.DHASH -> {
-                        val ha = photos[i].dHash; val hb = photos[j].dHash
-                        if (ha != null && hb != null) hammingDistance.similarity(ha, hb) else 0f
-                    }
-                    else -> 0f
-                }
-                totalSim += sim
-                count++
-            }
-        }
-        return if (count > 0) totalSim / count else settings.similarityThreshold
+    private fun bits(settings: ScanSettings) = if (settings.visualHashAlgorithm == HashAlgorithm.PHASH) PerceptualDct.BITS else 64
+    private fun informative(hash: Long?, bits: Int): Boolean = hash != null && hash != 0L && hash != (if (bits == 64) -1L else Long.MAX_VALUE)
+    private fun group(photos: List<Photo>, type: DuplicateGroup.GroupType, score: Float): DuplicateGroup {
+        val sorted = photos.sortedWith(compareByDescending<Photo> { it.qualityScore }.thenBy { it.mediaKey })
+        val keeper = sorted.first()
+        return DuplicateGroup(UUID.randomUUID().toString(), sorted, type, score, keeper.id, sorted.drop(1).sumOf { it.sizeBytes })
     }
 }
