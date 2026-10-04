@@ -54,9 +54,11 @@ jobs:
           roots = [ET.parse(p).getroot() for p in reports]
           count = sum(int(r.attrib['tests']) for r in roots)
           failures = sum(int(r.attrib.get('failures', 0)) + int(r.attrib.get('errors', 0)) + int(r.attrib.get('skipped', 0)) for r in roots)
-          assert count >= 63, f'Expected platform and safety tests, found {count}'
+          assert count >= 86, f'Expected platform, safety and session tests, found {count}'
           assert failures == 0, f'{failures} failed/error/skipped tests'
           print(f'{count} tests; zero failures/errors/skips')
+          schema = Path('app/schemas/com.photoclarity.ai.data.local.db.PhotoClarityDatabase')
+          assert (schema / '1.json').is_file() and (schema / '2.json').is_file(), 'Migration schemas missing'
       - name: Upload only build reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

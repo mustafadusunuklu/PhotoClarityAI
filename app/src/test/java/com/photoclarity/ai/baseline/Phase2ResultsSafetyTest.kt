@@ -7,7 +7,8 @@ import com.photoclarity.ai.core.media.PhotoAccessManager
 import com.photoclarity.ai.core.media.PhotoAccessSnapshot
 import com.photoclarity.ai.domain.repository.PhotoRepository
 import com.photoclarity.ai.ui.results.ResultsViewModel
-import com.photoclarity.ai.ui.scan.ScanResultHolder
+import com.photoclarity.ai.testing.MemorySessionRepository
+import com.photoclarity.ai.core.session.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -25,15 +26,14 @@ class Phase2ResultsSafetyTest {
     private lateinit var vm: ResultsViewModel
     private lateinit var access: MutableStateFlow<PhotoAccessSnapshot>
     @Before fun setup() {
-        ScanResultHolder.groups = listOf(photos); ScanResultHolder.error = null; ScanResultHolder.accessRevision = 0
+        val sessions = MemorySessionRepository(listOf(photos))
         repo = FakePhotoRepository().also { it.removalMode = PhotoRepository.RemovalMode.SYSTEM_TRASH }
         stats = FakeSettingsRepository()
         access = MutableStateFlow(PhotoAccessSnapshot(PhotoAccess.FULL))
         val manager = mock(PhotoAccessManager::class.java)
         `when`(manager.state).thenReturn(access)
-        vm = ResultsViewModel(repo, stats, QualityScorer(), manager)
+        vm = ResultsViewModel(RemovalCoordinator(repo, stats, QualityScorer(), sessions, manager, OperationGate(), SessionClock(), main.runtime()))
     }
-    @After fun clear() { ScanResultHolder.groups = emptyList(); ScanResultHolder.error = null; ScanResultHolder.accessRevision = null }
     private fun uri(id: Long) = photos.photos.first { it.id == id }.contentUri
     private fun firstBatch() = PhotoRepository.DeleteResult.RequiresPermission(mock(IntentSender::class.java),
         trashUris = listOf(uri(2)), remainingTrashUris = listOf(uri(3), uri(4)))

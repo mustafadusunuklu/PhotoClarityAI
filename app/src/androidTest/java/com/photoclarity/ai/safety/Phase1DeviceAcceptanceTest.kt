@@ -23,7 +23,12 @@ import com.photoclarity.ai.data.repository.PhotoRepositoryImpl
 import com.photoclarity.ai.domain.model.*
 import com.photoclarity.ai.domain.repository.*
 import com.photoclarity.ai.ui.results.*
-import com.photoclarity.ai.ui.scan.ScanResultHolder
+import com.photoclarity.ai.testing.MemorySessionRepository
+import com.photoclarity.ai.core.session.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import com.photoclarity.ai.ui.theme.PhotoClarityTheme
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -50,14 +55,14 @@ class Phase1DeviceAcceptanceTest {
     private lateinit var realRepo: PhotoRepositoryImpl
     private lateinit var vm: ResultsViewModel
     private val stats = MemoryStats()
-    private var originalGroups = emptyList<DuplicateGroup>()
+    private var sessions = MemorySessionRepository()
+    private val testScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     @Before fun setup() {
         require(android.os.Build.VERSION.SDK_INT >= 30)
         activityRule.scenario.onActivity { activity = it }
         val automation = instrumentation.uiAutomation
         automation.serviceInfo = automation.serviceInfo.apply { flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS }
-        originalGroups = ScanResultHolder.groups
         val storage = StorageUtils(context)
         realRepo = PhotoRepositoryImpl(context,MediaStoreScanner(context,storage),storage,MediaRemovalPlatform(context))
         val fixture = Phase1SyntheticMedia.png()
@@ -86,8 +91,8 @@ class Phase1DeviceAcceptanceTest {
 
     private fun bind(repo: PhotoRepository, type: DuplicateGroup.GroupType = DuplicateGroup.GroupType.EXACT_DUPLICATE, keeperId: Long = photos.first().id) {
         instrumentation.runOnMainSync {
-            ScanResultHolder.groups = listOf(DuplicateGroup("device-$folder",photos,type,1f,keeperId,photos.drop(1).sumOf { it.sizeBytes }))
-            vm = ResultsViewModel(repo,stats,QualityScorer())
+            sessions = MemorySessionRepository(listOf(DuplicateGroup("device-$folder",photos,type,1f,keeperId,photos.drop(1).sumOf { it.sizeBytes })))
+            vm = ResultsViewModel(RemovalCoordinator(repo,stats,QualityScorer(),sessions,null,OperationGate(),SessionClock(),SessionScope(testScope)))
             activity.setContent { PhotoClarityTheme { ResultsScreen({}, {}, vm) } }
         }
         instrumentation.waitForIdleSync()
@@ -104,7 +109,8 @@ class Phase1DeviceAcceptanceTest {
                 }
             }
         }
-        instrumentation.runOnMainSync { ScanResultHolder.groups = originalGroups }
+        testScope.cancel()
+        runBlocking { ProductionTestSessions.cleanup(context, folder) }
     }
 
     // No Espresso hidden input API: Android 17 removed InputManager.getInstance().
@@ -286,13 +292,17 @@ class Phase1DeviceAcceptanceTest {
     }
 
     @Test fun mixedTrashedAndUnchangedRowsAreReconciledByUri() {
-        // Real provider outcome, not an invented partial-success callback.
-        assertEquals(1,resolver.update(photos[1].contentUri,ContentValues().apply { put(MediaStore.MediaColumns.IS_TRASHED,1) },null,null))
-        val result = runBlocking { realRepo.verifyTrashedPhotos(listOf(photos[1].contentUri,photos[2].contentUri)) }
-        assertEquals(setOf(photos[1].contentUri),result.removedUris)
-        assertEquals(setOf(photos[2].contentUri),result.failedUris)
         val wrapper = object : PhotoRepository by realRepo {
-            override suspend fun deletePhotos(uris: List<Uri>): PhotoRepository.DeleteResult = result
+            override suspend fun deletePhotos(uris: List<Uri>): PhotoRepository.DeleteResult {
+                // Apply the controlled provider outcome after preflight/journal, like a real
+                // partial side effect. Changing media before preflight must invalidate findings.
+                assertEquals(setOf(photos[1].contentUri,photos[2].contentUri),uris.toSet())
+                assertEquals(1,resolver.update(photos[1].contentUri,ContentValues().apply { put(MediaStore.MediaColumns.IS_TRASHED,1) },null,null))
+                val result = realRepo.verifyTrashedPhotos(uris)
+                assertEquals(setOf(photos[1].contentUri),result.removedUris)
+                assertEquals(setOf(photos[2].contentUri),result.failedUris)
+                return result
+            }
         }
         bind(wrapper)
         instrumentation.runOnMainSync {
@@ -385,7 +395,7 @@ class Phase1DeviceAcceptanceTest {
     }
 
     @Test fun systemConsentSurvivesLandscapeActivityRecreation() {
-        openRealResults(ScanResultHolder.groups)
+        openRealResults(sessions.state.value.groups)
         clickText("Korunacaklar Dışındakileri Seç")
         appConfirm()
         val beforeRotation = activity
@@ -402,7 +412,7 @@ class Phase1DeviceAcceptanceTest {
         photos.drop(1).forEach { assertTrue(MediaRemovalPlatform(context).isTrashed(it.contentUri)) }
         // Landscape snackbar covers the subtitle: assert the visible empty title and actual outcome.
         awaitText("Bu taramada grup kalmadı")
-        assertTrue(ScanResultHolder.groups.isEmpty())
+        assertTrue(ProductionTestSessions.state(context).visibleGroups.isEmpty())
         evidence("system-consent-landscape-result")
         activityRule.scenario.onActivity {
             assertNotSame(beforeRotation,it)
@@ -412,7 +422,7 @@ class Phase1DeviceAcceptanceTest {
     }
 
     private fun openRealResults(groups: List<DuplicateGroup>) {
-        instrumentation.runOnMainSync { ScanResultHolder.groups = groups }
+        runBlocking { ProductionTestSessions.seed(context, groups, folder) }
         activityRule.scenario.recreate() // Actual MainActivity / NavHost / Hilt ViewModels.
         activityRule.scenario.onActivity { activity = it }
         var shortcut: AccessibilityNodeInfo? = null

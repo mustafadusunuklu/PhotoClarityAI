@@ -13,6 +13,7 @@ import com.photoclarity.ai.domain.model.StorageInfo
 import com.photoclarity.ai.domain.repository.PhotoRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,6 +24,26 @@ class PhotoRepositoryImpl @Inject constructor(
     private val storageUtils: StorageUtils,
     private val removalPlatform: MediaRemovalPlatform
 ) : PhotoRepository {
+
+    override suspend fun arePhotosCurrent(photos: List<Photo>): Boolean = withContext(Dispatchers.IO) {
+        com.photoclarity.ai.core.media.PhotoAccessManager.requireAccess(context)
+        val versions = mutableMapOf<String, String>()
+        photos.distinctBy { it.contentUri }.all { photo ->
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val uri = photo.contentUri
+            if (uri.scheme != "content" || uri.authority != MediaStore.AUTHORITY || uri.lastPathSegment?.toLongOrNull() != photo.id) false
+            else if (android.os.Build.VERSION.SDK_INT >= 30 && photo.mediaStoreVersion != null &&
+                versions.getOrPut(uri.pathSegments.first()) { MediaStore.getVersion(context, uri.pathSegments.first()) } != photo.mediaStoreVersion) false
+            else context.contentResolver.query(uri, arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_MODIFIED, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.MIME_TYPE,
+                MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT) +
+                (if (android.os.Build.VERSION.SDK_INT >= 30 && photo.generationModified != null) arrayOf(MediaStore.MediaColumns.GENERATION_MODIFIED) else emptyArray()), null, null, null)?.use { row ->
+                row.moveToFirst() && row.getLong(0) == photo.id && row.getLong(1) == photo.sizeBytes && row.getLong(2) == photo.dateModified &&
+                    row.getLong(3) == photo.dateAdded && row.getString(4) == photo.mimeType && row.getInt(5) == photo.width && row.getInt(6) == photo.height &&
+                    (photo.generationModified == null || row.getLong(7) == photo.generationModified)
+            } ?: false
+        }
+    }
 
     override suspend fun loadAllPhotos(selectedFolders: Set<String>): List<Photo> =
         scanner.scanAllPhotos(selectedFolders = selectedFolders)

@@ -29,6 +29,10 @@ fun GroupDetailScreen(
     viewModel: ResultsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    if (state.restoring) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        return
+    }
     val group = state.groups.firstOrNull { it.id == groupId } ?: run {
         LaunchedEffect(groupId) { onBack() }
         return

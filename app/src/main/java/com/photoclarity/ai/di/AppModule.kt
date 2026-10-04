@@ -25,6 +25,11 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+import com.photoclarity.ai.core.session.*
+import com.photoclarity.ai.domain.repository.ScanSessionRepository
+import com.photoclarity.ai.data.repository.RoomScanSessionRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -40,12 +45,17 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): PhotoClarityDatabase =
         Room.databaseBuilder(context, PhotoClarityDatabase::class.java, "photoclarity.db")
-            .fallbackToDestructiveMigration()
+            .addMigrations(PhotoClarityDatabase.MIGRATION_1_2)
             .build()
 
     @Provides
     @Singleton
     fun provideHashCacheDao(db: PhotoClarityDatabase): HashCacheDao = db.hashCacheDao()
+
+    @Provides @Singleton fun provideDispatchers() = SessionDispatchers()
+    @Provides @Singleton fun provideSessionScope(dispatchers: SessionDispatchers) = SessionScope(CoroutineScope(SupervisorJob() + dispatchers.main))
+    @Provides @Singleton fun provideSessionRepository(db: PhotoClarityDatabase, clock: SessionClock): ScanSessionRepository = RoomScanSessionRepository(db, clock)
+    @Provides @Singleton fun provideAnalysisEngine(analyzer: PhotoAnalyzer): ScanAnalysisEngine = ScanAnalysisEngine { photos, settings, progress -> analyzer.analyzeDetailed(photos, settings, progress) }
 
     // ─── Utils ───────────────────────────────────────────────────────────────
 
@@ -106,10 +116,12 @@ object AppModule {
         qualityScorer: QualityScorer,
         burstDetector: BurstDetector,
         bitmapUtils: BitmapUtils,
-        hashCacheDao: HashCacheDao
+        hashCacheDao: HashCacheDao,
+        dispatchers: SessionDispatchers,
+        clock: SessionClock
     ): PhotoAnalyzer = PhotoAnalyzer(
         cryptoHasher, pHasher, aHasher, dHasher,
-        hamming, qualityScorer, burstDetector, bitmapUtils, hashCacheDao
+        hamming, qualityScorer, burstDetector, bitmapUtils, hashCacheDao, dispatchers, clock
     )
 
     // ─── Media ───────────────────────────────────────────────────────────────
@@ -132,6 +144,6 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideSettingsRepository(@ApplicationContext context: Context): SettingsRepository =
-        SettingsDataStore(context)
+    fun provideSettingsRepository(@ApplicationContext context: Context, clock: SessionClock): SettingsRepository =
+        SettingsDataStore(context, clock)
 }

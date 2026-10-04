@@ -31,13 +31,13 @@ fun PhotoClarityNavGraph(
     navController: NavHostController,
     startDestination: String,
     onOpenDrawer: () -> Unit = {},
-    onNavigate: (String) -> Unit = {}
+    onNavigate: (String) -> Unit = {},
+    onStartScanRequested: () -> Boolean
 ) {
     val access = LocalPhotoAccess.current
     val startScan: () -> Unit = {
-        if (access.snapshot.access != PhotoAccess.DENIED && access.snapshot.error == null)
-            navController.navigate(Screen.Scan.route)
-        else access.request()
+        if (access.snapshot.access == PhotoAccess.DENIED || access.snapshot.error != null) access.request()
+        else if (onStartScanRequested()) navController.navigate(Screen.Scan.route) { launchSingleTop = true }
     }
     NavHost(
         navController    = navController,
@@ -157,7 +157,7 @@ fun PhotoClarityNavGraph(
         // ── Smart Suggestions ──────────────────────────────────────────────────
         composable(Screen.SmartSuggestions.route) {
             SmartSuggestionsScreen(
-                onStartScan = { navController.navigate(Screen.Scan.route) },
+                onStartScan = startScan,
                 onBack      = { navController.popBackStack() }
             )
         }

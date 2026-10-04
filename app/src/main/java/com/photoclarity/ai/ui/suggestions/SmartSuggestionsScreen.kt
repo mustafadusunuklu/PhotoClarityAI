@@ -20,7 +20,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.photoclarity.ai.domain.model.DuplicateGroup
-import com.photoclarity.ai.ui.scan.ScanResultHolder
+import com.photoclarity.ai.ui.session.SessionViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.getValue
 import com.photoclarity.ai.ui.theme.GradientEnd
 import com.photoclarity.ai.ui.theme.GradientStart
 import com.photoclarity.ai.ui.theme.Secondary
@@ -29,9 +32,11 @@ import com.photoclarity.ai.ui.theme.Secondary
 @Composable
 fun SmartSuggestionsScreen(
     onStartScan: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    viewModel: SessionViewModel = hiltViewModel()
 ) {
-    val groups = ScanResultHolder.groups
+    val sessionState by viewModel.state.collectAsStateWithLifecycle()
+    val groups = sessionState.visibleGroups
     val totalWasteMb = groups.sumOf { it.totalWasteBytes } / (1024f * 1024f)
 
     Scaffold(

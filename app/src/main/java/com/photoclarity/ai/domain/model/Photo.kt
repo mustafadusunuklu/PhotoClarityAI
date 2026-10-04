@@ -29,7 +29,9 @@ data class Photo(
     val dHash: Long? = null,
     val qualityScore: Float = 0f,
     val sharpnessScore: Float = 0f,
-    val isBursted: Boolean = false
+    val isBursted: Boolean = false,
+    val generationModified: Long? = null,
+    val mediaStoreVersion: String? = null
 ) {
     val megapixels: Float get() = (width * height) / 1_000_000f
     val sizeKb: Long get() = sizeBytes / 1024

@@ -2,11 +2,11 @@
 
 Mevcut Kotlin/Compose Android uygulaması; MediaStore üzerinden fotoğraf listeler, MD5/SHA-256 byte hash'leri ve pHash/aHash/dHash görsel hash'leriyle gruplar üretir, kalite/seri çekim önerileri ve silme akışı sunar. Kodda bir ML model servisi yoktur. Bazı görünen ekranlar demo/placeholder'dır; tamamlanmış özellik envanteri ve riskler [ana analiz ve roadmap](PHOTOCLARITYAI_PROJECT_ANALYSIS_AND_ROADMAP.md) içindedir.
 
-**Production-ready değildir.** [Faz 1 güvenlik raporu](docs/PHASE1_SAFETY_REPORT.md) API 37 emülatöründeki gerçek sistem onayı/çöp kutusu kanıtlarını ve açık cihaz matrisi maddelerini içerir. Faz 2 platform/izin çalışmasının kapsamı ve doğrulama sınırları [Faz 2 raporundadır](docs/PHASE2_PLATFORM_REPORT.md). Gerçek kişisel galeride destructive QA yapmayın.
+**Production-ready değildir.** [Faz 1 güvenlik raporu](docs/PHASE1_SAFETY_REPORT.md) API 37 emülatöründeki gerçek sistem onayı/çöp kutusu kanıtlarını ve açık cihaz matrisi maddelerini içerir. Platform/izin sınırları [Faz 2 raporunda](docs/PHASE2_PLATFORM_REPORT.md), session/lifecycle ve process recovery kontratı [Faz 3 raporundadır](docs/PHASE3_STATE_REPORT.md). Gerçek kişisel galeride destructive QA yapmayın.
 
 ## Build ortamı
 
-| Bileşen | Faz 2 çalışma ağacı |
+| Bileşen | Faz 3 çalışma ağacı |
 |---|---|
 | Gradle / AGP | Wrapper 8.11.1 / 8.10.1 |
 | Kotlin / KSP | 2.0.21 / 2.0.21-1.0.27 |
@@ -66,19 +66,21 @@ Android Studio'da proje kökünü açın, Gradle JDK'yi seçin, sync ve Run `app
 - Lint: `app/build/reports/lint-results-debug.html` ve `.xml`; mevcut warning'ler saklanır, suppress/lint-baseline eklenmedi.
 - `:app:compileDebugShaders NO-SOURCE` gibi shader görevleri normal olabilir; `:app:testDebugUnitTest` **NO-SOURCE olmamalıdır**.
 
-24 JVM testinin bazı beklentileri bilinen hataları kaydeder (R02/R03/R04/R07/R12/R13/R14). Faz 1'de risk düzeltildiğinde ilgili test güvenli kontrata değiştirilmelidir; testleri skip ederek yeşil sonuç almak kabul edilmez. Android ContentResolver/Uri/IntentSender mock; DAO/repository/settings fake'tir. Gerçek hash/analyzer/ViewModel çağrılır. Android decoder, gerçek Room, permission consent, UI/lifecycle/device davranışı bu JVM testleriyle doğrulanmaz.
+Faz 0'ın tarihsel 24 JVM testi bilinen hataları kaydediyordu (R02/R03/R04/R07/R12/R13/R14). Faz 1–3'te beklentiler güvenli kontrata taşındı ve kapsam 86 teste çıktı; skip ederek yeşil sonuç üretmek kabul edilmez. JVM'de Android ContentResolver/Uri/IntentSender mock, repository/settings test boundary'leri fake'tir; gerçek hash/analyzer/ViewModel/coordinator çağrıları yapılır. Android decoder, gerçek Room/DataStore, sistem consent ve UI/lifecycle/process davranışı ayrı [cihaz testleriyle](app/src/androidTest/README.md) doğrulanır. Fake test, gerçek cihaz kabulünün yerine geçmez.
 
 Detaylar: [Faz 0 raporu](docs/PHASE0_BASELINE_REPORT.md), [benchmark planı](docs/BENCHMARK_PLAN.md), [fixture hakları](app/src/test/resources/fixtures/README.md).
 
 ## CI ve dosya güvenliği
 
-`.github/workflows/android-baseline.yml`: push/PR/manual, JDK 17, SDK 36, checksum kontrollü Wrapper, clean debug, unsigned release, en az 63 gerçek JVM testi ve lint. GitHub Actions yalnız sonuç raporlarını yükler; signing/credential istemez. Yerel build ve workflow statik kontrolü, GitHub Actions run sonucunun yerine geçmez; ilgili commit'in run durumunu ayrıca doğrulayın.
+`.github/workflows/android-baseline.yml`: push/PR/manual, JDK 17, SDK 36, checksum kontrollü Wrapper, clean debug/test APK, unsigned release, en az 86 gerçek JVM testi, v1/v2 Room şemaları ve debug/release lint. GitHub Actions yalnız sonuç raporlarını yükler; signing/credential istemez. Yerel build ve workflow statik kontrolü, GitHub Actions run sonucunun yerine geçmez; ilgili commit'in run durumunu ayrıca doğrulayın.
 
 `.gitignore` heap dump, `.baseline`, IDE, build/cache, makine SDK ayarı ve signing/credential dosyalarını dışlar. Ignore, dosyaların diskten silinmesi veya anonimleştirilmesi değildir. Mevcut 3.61 GiB heap dump korunur; içinde kullanıcı verisi bulunabilir. Yerel snapshot kaynaklar ve `local.properties` içerir, özel yedek olarak tutulmalıdır; paylaşmayın. Ignore, daha önce track edilmiş secret'ı geçmişten kaldırmaz; baseline geçmişinde böyle bir dosya tespit edilmedi. Genel anahtar sözcük taraması secret yokluğu garantisi değildir.
 
 ## Mimari ve haklar
 
-Tek `:app` modülü: `core` analiz/hash/media; `data` Room/DataStore/repository; `domain` modeller/interface; `di` Hilt; `ui` Compose/ViewModel. Katman isimleri tam clean architecture garantisi değildir: domain Android `Uri` taşır, sonuçlar global `ScanResultHolder`'dadır. Faz 0 bu yapıları değiştirmez.
+Tek `:app` modülü: `core` analiz/hash/media/session; `data` Room/DataStore/repository; `domain` modeller/interface; `di` Hilt; `ui` Compose/ViewModel. Faz 3 global `ScanResultHolder`'ı kaldırır: application coordinator'ları ve Room-backed repository StateFlow ortak sonuç/selection/journal kaynağıdır. Katman isimleri tam clean architecture garantisi değildir: domain Android `Uri` taşır, coordinator'lar UI state tipleri kullanır.
+
+Tarama uygulama görünürken kullanıcı başlatımıyla çalışır; rotation/navigation tek işi korur. Home/background keser; process kill sonrası yarım session INTERRUPTED olur ve kullanıcı yeniden başlatır. Tamamlanmış sonuç/seçim açılışta izin/metadata doğrulaması geçmeden silmeye açılamaz. Recovery otomatik consent, kalıcı silme retry veya sonraki batch başlatmaz. Sistem trash boşalan bayta kredilenmez; kalıcı silme request ID ile atomik/idempotent sayılır. Room v1→v2 migration ve export şemaları eski hash cache'i korur; DB/journal settings-only backup dışında kalır. [Karar kaydı](docs/PHASE3_STATE_DESIGN.md) ve [test runbook](app/src/androidTest/README.md).
 
 Önceki GitHub README'si MIT lisansı beyan ediyordu; depoda `LICENSE` dosyası yoktur. Bu beyanın kaynak hak sahipleriyle doğrulanması ve gerçek lisans metninin kararlaştırılması gerekir. Bu fazda yeni uygulama lisansı atanmadı. Sentetik fixture/generator CC0-1.0; üçüncü taraf dependency lisansları release QA'da ayrıca envanterlenmelidir.
 

@@ -30,11 +30,18 @@ internal fun group(type: DuplicateGroup.GroupType = DuplicateGroup.GroupType.VIS
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainDispatcherRule : TestWatcher() {
     val dispatcher = StandardTestDispatcher()
+    private val scopes = mutableListOf<kotlinx.coroutines.CoroutineScope>()
+    fun runtime(): com.photoclarity.ai.core.session.SessionScope = com.photoclarity.ai.core.session.SessionScope(
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + dispatcher).also { scopes += it })
     override fun starting(description: Description) = Dispatchers.setMain(dispatcher)
-    override fun finished(description: Description) = Dispatchers.resetMain()
+    override fun finished(description: Description) { scopes.forEach { it.coroutineContext[kotlinx.coroutines.Job]?.cancel() }; Dispatchers.resetMain() }
 }
 
 internal class FakePhotoRepository : PhotoRepository {
+    var currentPhotos = true
+    var catalog = emptyList<Photo>()
+    var loadCount = 0
+    override suspend fun arePhotosCurrent(photos: List<Photo>) = currentPhotos
     override var removalMode = PhotoRepository.RemovalMode.PERMANENT_DELETE
     var result: PhotoRepository.DeleteResult = PhotoRepository.DeleteResult.Success(emptySet())
     var verified = PhotoRepository.DeleteResult.Success(emptySet())
@@ -44,11 +51,13 @@ internal class FakePhotoRepository : PhotoRepository {
         return verified
     }
     val requests = mutableListOf<List<Uri>>()
+    var beforeDelete: (() -> Unit)? = null
     override suspend fun deletePhotos(uris: List<Uri>): PhotoRepository.DeleteResult {
+        beforeDelete?.invoke()
         requests += uris.toList()
         return result
     }
-    override suspend fun loadAllPhotos(selectedFolders: Set<String>) = emptyList<Photo>()
+    override suspend fun loadAllPhotos(selectedFolders: Set<String>): List<Photo> { ++loadCount; return catalog }
     override suspend fun loadPhotosFromBucket(bucketId: Long) = emptyList<Photo>()
     override suspend fun getAllBuckets() = emptyMap<Long, String>()
     override suspend fun getStorageInfo() = StorageInfo(100, 50, 0, 0)
@@ -57,7 +66,15 @@ internal class FakePhotoRepository : PhotoRepository {
 
 internal class FakeSettingsRepository : SettingsRepository {
     val additions = mutableListOf<Long>()
-    override fun getScanSettings() = flowOf(ScanSettings())
+    val creditedIds = mutableSetOf<String>()
+    var failAfterCredit = false
+    var settingsReadError: Exception? = null
+    var config = ScanSettings()
+    override suspend fun addCleanedBytesOnce(requestId: String, bytes: Long, operationMonthKey: Int) {
+        if (creditedIds.add(requestId)) additions += bytes
+        if (failAfterCredit) { failAfterCredit = false; error("Simulated crash after atomic credit") }
+    }
+    override fun getScanSettings() = kotlinx.coroutines.flow.flow { settingsReadError?.let { throw it }; emit(config) }
     override suspend fun saveScanSettings(settings: ScanSettings) = Unit
     override suspend fun getCleanedBytesThisMonth() = additions.sum()
     override suspend fun addCleanedBytes(bytes: Long) { additions += bytes }

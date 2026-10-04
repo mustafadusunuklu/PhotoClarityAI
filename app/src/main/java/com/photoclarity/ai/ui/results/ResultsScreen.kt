@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -52,15 +53,18 @@ fun ResultsScreen(
         viewModel.onLegacyWritePermissionResult(it)
     }
 
-    // System trash consent (API 30+) or per-photo write consent (API 29).
+    var launchedConsentId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Only a matching request/batch callback can affect the frozen transaction.
     val deleteRequestLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
-        viewModel.onDeleteResult(result.resultCode == Activity.RESULT_OK)
+        viewModel.onDeleteResult(result.resultCode == Activity.RESULT_OK, launchedConsentId)
+        launchedConsentId = null
     }
 
     LaunchedEffect(uiState.pendingDeleteIntentSender) {
         uiState.pendingDeleteIntentSender?.let { sender ->
+            launchedConsentId = uiState.pendingConsentId
             viewModel.onDeletePromptLaunched()
             try {
                 deleteRequestLauncher.launch(IntentSenderRequest.Builder(sender).build())
@@ -106,16 +110,24 @@ fun ResultsScreen(
             }
         }
     ) { padding ->
-        if (uiState.groups.isEmpty() && !uiState.isLoading) {
+        if (uiState.restoring) {
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Text("Tarama kaydı ve fotoğraf erişimi doğrulanıyor.")
+                }
+            }
+        } else if (uiState.groups.isEmpty() && !uiState.isLoading) {
             Column(modifier = Modifier.fillMaxSize().padding(padding)) {
                 uiState.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp)) }
+                if (uiState.recoveryRequired) TextButton(onClick = { viewModel.retryRecovery() }) { Text("İşlem kaydını yeniden kontrol et") }
                 if (uiState.error?.contains("Silme izni verilmedi") == true) {
                     TextButton(onClick = openPermissionSettings) { Text("Silme izin ayarlarını aç") }
                 }
                 EmptyStateView(
-                    title = if (uiState.error != null) "Sonuçlar doğrulanamadı" else "Bu taramada grup kalmadı",
+                    title = if (uiState.error != null) "Sonuçlar doğrulanamadı" else if (uiState.sessionId == null) "Henüz tamamlanmış tarama yok" else "Bu taramada grup kalmadı",
                     subtitle = if (uiState.error != null) "İzni kontrol ederek yeniden tarayın; bu ekran galerinizin temiz olduğunu göstermez."
-                        else if (com.photoclarity.ai.ui.scan.ScanResultHolder.access == com.photoclarity.ai.core.media.PhotoAccess.LIMITED)
+                        else if (uiState.scopeKey?.startsWith("LIMITED:") == true)
                             "Yalnız erişim verdiğiniz fotoğraflar incelendi. Tüm galeri taranmadı."
                         else "Bu taramanın kapsamındaki kopya veya benzer fotoğraf grupları gösterilir.",
                     modifier = Modifier.weight(1f))
@@ -137,6 +149,7 @@ fun ResultsScreen(
                     uiState.error?.let {
                         Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 8.dp))
                     }
+                    if (uiState.recoveryRequired) TextButton(onClick = { viewModel.retryRecovery() }) { Text("İşlem kaydını yeniden kontrol et") }
                     if (uiState.error?.contains("Silme izni verilmedi") == true) {
                         Text("Kalıcı silme için depolama yazma izni gerekir. İzni cihaz ayarlarından değiştirebilirsiniz.")
                         TextButton(onClick = openPermissionSettings) { Text("Silme izin ayarlarını aç") }

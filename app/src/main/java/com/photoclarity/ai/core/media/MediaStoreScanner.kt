@@ -9,6 +9,7 @@ import com.photoclarity.ai.domain.model.Photo
 import com.photoclarity.ai.core.util.StorageUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -41,7 +42,8 @@ class MediaStoreScanner @Inject constructor(
         MediaStore.Images.Media.HEIGHT,
         MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
         MediaStore.Images.Media.BUCKET_ID
-    )
+    ) + (if (Build.VERSION.SDK_INT >= 29) arrayOf(MediaStore.MediaColumns.VOLUME_NAME) else emptyArray()) +
+        (if (Build.VERSION.SDK_INT >= 30) arrayOf(MediaStore.MediaColumns.GENERATION_MODIFIED) else emptyArray())
 
     /**
      * Load all photos from the device via MediaStore.
@@ -56,6 +58,7 @@ class MediaStoreScanner @Inject constructor(
     ): List<Photo> = withContext(Dispatchers.IO) {
         PhotoAccessManager.requireAccess(context)
         val photos = mutableListOf<Photo>()
+        val versions = mutableMapOf<String, String>()
 
         // Build the WHERE clause dynamically
         val (selection, selectionArgs) = buildSelectionClause(minSizeBytes, selectedFolders)
@@ -79,10 +82,16 @@ class MediaStoreScanner @Inject constructor(
             val heightCol   = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
             val bucketNameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
             val bucketIdCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
+            val volumeCol = cursor.getColumnIndex(MediaStore.MediaColumns.VOLUME_NAME)
+            val generationCol = cursor.getColumnIndex(MediaStore.MediaColumns.GENERATION_MODIFIED)
 
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idCol)
-                val contentUri = ContentUris.withAppendedId(collection, id)
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val volume = if (volumeCol >= 0) cursor.getString(volumeCol) else null
+                val itemCollection = if (Build.VERSION.SDK_INT >= 29 && volume != null) MediaStore.Images.Media.getContentUri(volume) else collection
+                val contentUri = ContentUris.withAppendedId(itemCollection, id)
+                val version = if (Build.VERSION.SDK_INT >= 30 && volume != null) versions.getOrPut(volume) { MediaStore.getVersion(context, volume) } else null
 
                 photos.add(
                     Photo(
@@ -102,7 +111,9 @@ class MediaStoreScanner @Inject constructor(
                         // GPS coordinates are no longer read from MediaStore (deprecated API 29+).
                         // They can be retrieved on-demand from ExifInterface if needed.
                         latitude    = null,
-                        longitude   = null
+                        longitude   = null,
+                        generationModified = if (generationCol >= 0 && !cursor.isNull(generationCol)) cursor.getLong(generationCol) else null,
+                        mediaStoreVersion = version
                     )
                 )
             }

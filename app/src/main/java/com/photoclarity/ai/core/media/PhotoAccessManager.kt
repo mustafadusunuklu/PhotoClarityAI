@@ -26,7 +26,9 @@ data class PhotoAccessSnapshot(
     val revision: Long = 0,
     val foreground: Long = 0,
     val needsSettings: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val ready: Boolean = false,
+    val scopeKey: String? = null
 )
 
 @Singleton
@@ -70,7 +72,8 @@ class PhotoAccessManager @Inject constructor(@ApplicationContext private val con
         val blocked = access == PhotoAccess.DENIED && history.getBoolean("requested", false) &&
             permissions().none { activity.shouldShowRequestPermissionRationale(it) }
         _state.value = previous.copy(access = access, revision = previous.revision + if (changed) 1 else 0,
-            foreground = previous.foreground + 1, needsSettings = blocked, error = null)
+            foreground = previous.foreground + 1, needsSettings = blocked, error = null,
+            ready = access != PhotoAccess.LIMITED, scopeKey = if (access == PhotoAccess.LIMITED) null else access.name)
         if (access != PhotoAccess.LIMITED || Build.VERSION.SDK_INT < 34) return
         refreshJob = scope.launch {
             try {
@@ -86,10 +89,14 @@ class PhotoAccessManager @Inject constructor(@ApplicationContext private val con
                 }
                 val selectionChanged = limitedIds != null && limitedIds != ids
                 limitedIds = ids
-                if (selectionChanged) _state.value = _state.value.copy(revision = _state.value.revision + 1)
+                val fingerprint = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(ids.sorted().joinToString(",").toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                _state.value = _state.value.copy(revision = _state.value.revision + if (selectionChanged) 1 else 0,
+                    ready = true, scopeKey = "LIMITED:$fingerprint")
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 _state.value = _state.value.copy(revision = _state.value.revision + 1,
+                    ready = true, scopeKey = null,
                     error = "Seçilen fotoğraflara erişim doğrulanamadı. İzni kontrol ederek yeniden tarayın.")
             }
         }

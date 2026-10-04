@@ -61,7 +61,7 @@ fun ScanScreen(
             // Title and progress text
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "Kütüphane Analiz Ediliyor",
+                    text = if (uiState.isScanning) "Kütüphane Analiz Ediliyor" else "Tarama Durumu",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -85,6 +85,9 @@ fun ScanScreen(
                     )
                 }
 
+                Text("Tarama uygulama görünürken çalışır. Arka plana geçince durur; yeniden başlatabilirsiniz.",
+                    style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
+                if (uiState.failedPhotos > 0) Text("${uiState.failedPhotos} fotoğraf analiz edilemedi.")
                 // Show error if any
                 uiState.error?.let { error ->
                     Spacer(Modifier.height(8.dp))
@@ -123,14 +126,14 @@ fun ScanScreen(
 
             // Cancel button
             OutlinedButton(
-                onClick = { viewModel.cancelScan() },
+                onClick = { if (uiState.isScanning) viewModel.cancelScan() else viewModel.startScan() },
                 shape = RoundedCornerShape(20.dp),
                 modifier = Modifier
                     .fillMaxWidth(0.7f)
                     .height(48.dp)
             ) {
                 Text(
-                    text = "Taramayı İptal Et",
+                    text = if (uiState.isScanning) "Taramayı İptal Et" else "Taramayı Yeniden Başlat",
                     style = MaterialTheme.typography.bodyLarge
                 )
             }

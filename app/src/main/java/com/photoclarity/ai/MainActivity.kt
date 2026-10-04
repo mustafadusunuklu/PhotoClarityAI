@@ -16,7 +16,7 @@ import com.photoclarity.ai.core.media.PhotoAccessManager
 import com.photoclarity.ai.ui.components.LocalPhotoAccess
 import com.photoclarity.ai.ui.components.PhotoAccessBanner
 import com.photoclarity.ai.ui.components.PhotoAccessUi
-import com.photoclarity.ai.ui.scan.ScanResultHolder
+import com.photoclarity.ai.core.session.ScanCoordinator
 import javax.inject.Inject
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -40,6 +40,7 @@ import kotlinx.coroutines.launch
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject lateinit var photoAccess: PhotoAccessManager
+    @Inject lateinit var scans: ScanCoordinator
     private val photoPermissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         photoAccess.refresh(this, selectionMayHaveChanged = true)
     }
@@ -66,13 +67,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             PhotoClarityTheme(darkTheme = true) {
                 val access by photoAccess.state.collectAsStateWithLifecycle()
-                LaunchedEffect(access.revision, access.error) {
-                    if (ScanResultHolder.accessRevision != null &&
-                        (ScanResultHolder.accessRevision != access.revision || access.error != null)) {
-                        ScanResultHolder.groups = emptyList()
-                        ScanResultHolder.error = "Fotoğraf erişimi değişti. Güncel erişimle yeniden tarayın."
-                    }
-                }
                 val navController = rememberNavController()
                 val drawerState   = rememberDrawerState(DrawerValue.Closed)
                 val scope         = rememberCoroutineScope()
@@ -133,7 +127,8 @@ class MainActivity : ComponentActivity() {
                                     navController = navController,
                                     startDestination = startDestination,
                                     onOpenDrawer = openDrawer,
-                                    onNavigate = { route -> navigateTo(route) }
+                                    onNavigate = { route -> navigateTo(route) },
+                                    onStartScanRequested = { scans.start() || scans.state.value.isScanning }
                                 )
                             }
                         }

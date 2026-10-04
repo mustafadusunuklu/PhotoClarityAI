@@ -20,12 +20,17 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.coroutineContext
+import com.photoclarity.ai.core.session.SessionDispatchers
+import com.photoclarity.ai.core.session.SessionClock
+
+data class AnalysisOutcome(val groups: List<DuplicateGroup>, val attempted: Int, val failed: Int)
 
 @Singleton
 class PhotoAnalyzer @Inject constructor(
@@ -37,7 +42,9 @@ class PhotoAnalyzer @Inject constructor(
     private val qualityScorer: QualityScorer,
     private val burstDetector: BurstDetector,
     private val bitmapUtils: BitmapUtils,
-    private val hashCacheDao: HashCacheDao
+    private val hashCacheDao: HashCacheDao,
+    private val runtime: SessionDispatchers = SessionDispatchers(),
+    private val clock: SessionClock = SessionClock()
 ) {
     companion object {
         /** Parallel coroutines used for hash computation. */
@@ -61,23 +68,34 @@ class PhotoAnalyzer @Inject constructor(
         photos: List<Photo>,
         settings: ScanSettings,
         progress: MutableSharedFlow<ScanProgress>
-    ): List<DuplicateGroup> = withContext(Dispatchers.Default) {
+    ): List<DuplicateGroup> = analyzeDetailed(photos, settings, progress).groups
 
-        if (photos.isEmpty()) return@withContext emptyList()
+    suspend fun analyzeDetailed(photos: List<Photo>, settings: ScanSettings, progress: MutableSharedFlow<ScanProgress>): AnalysisOutcome = withContext(runtime.compute) {
+
+        if (photos.isEmpty()) return@withContext AnalysisOutcome(emptyList(), 0, 0)
 
         // Evict stale cache entries once per run
-        withContext(Dispatchers.IO) {
-            hashCacheDao.deleteExpired(System.currentTimeMillis() - CACHE_MAX_AGE_MS)
+        withContext(runtime.io) {
+            hashCacheDao.deleteExpired(clock.now() - CACHE_MAX_AGE_MS)
         }
 
         progress.emit(ScanProgress.Hashing(0, photos.size, ""))
 
         // ── Stage 1: Compute / retrieve hashes ───────────────────────────────
-        val hashedPhotos = computeHashesInParallel(photos, settings, progress).filter { it.sharpnessScore >= 0f }
+        val analyzed = computeHashesInParallel(photos, settings, progress)
+        val failed = analyzed.count { photo -> photo.sharpnessScore < 0f ||
+            (settings.exactMatchEnabled && (if (settings.hashAlgorithm == HashAlgorithm.SHA256) photo.sha256Hash else photo.md5Hash) == null) ||
+            (settings.visualSimilarityEnabled && when (settings.visualHashAlgorithm) {
+                HashAlgorithm.PHASH -> photo.pHash == null
+                HashAlgorithm.AHASH -> photo.aHash == null
+                HashAlgorithm.DHASH -> photo.dHash == null
+                else -> true
+            }) }
+        val hashedPhotos = analyzed.filter { it.sharpnessScore >= 0f }
 
         if (!coroutineContext.isActive) {
             progress.emit(ScanProgress.Cancelled)
-            return@withContext emptyList()
+            coroutineContext.ensureActive()
         }
 
         progress.emit(ScanProgress.Comparing(0, hashedPhotos.size))
@@ -137,7 +155,7 @@ class PhotoAnalyzer @Inject constructor(
         progress.emit(ScanProgress.Grouping(groups.size))
         progress.emit(ScanProgress.Completed)
 
-        groups.sortedByDescending { it.totalWasteBytes }
+        AnalysisOutcome(groups.sortedByDescending { it.totalWasteBytes }, photos.size, failed)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -154,8 +172,9 @@ class PhotoAnalyzer @Inject constructor(
         val done = AtomicInteger(0)
 
         chunks.map { chunk ->
-            async(Dispatchers.IO) {
+            async(runtime.io) {
                 chunk.map { photo ->
+                    coroutineContext.ensureActive()
                     val hashed = computeHashesForPhoto(photo, settings)
                     val current = done.incrementAndGet()
                     progress.emit(ScanProgress.Hashing(current, photos.size, photo.displayName))
@@ -171,7 +190,7 @@ class PhotoAnalyzer @Inject constructor(
      * re-scanning the file — critical for large libraries.
      */
     private suspend fun computeHashesForPhoto(photo: Photo, settings: ScanSettings): Photo =
-        withContext(Dispatchers.IO) {
+        withContext(runtime.io) {
             val uriString = photo.contentUri.toString()
 
             // ── Cache lookup ──────────────────────────────────────────────────
@@ -274,7 +293,7 @@ class PhotoAnalyzer @Inject constructor(
             }
     }
 
-    private fun findNearDuplicates(photos: List<Photo>, settings: ScanSettings): List<DuplicateGroup> {
+    private suspend fun findNearDuplicates(photos: List<Photo>, settings: ScanSettings): List<DuplicateGroup> {
         // Union-Find for transitive grouping
         val parent = IntArray(photos.size) { it }
 
@@ -288,6 +307,7 @@ class PhotoAnalyzer @Inject constructor(
         }
 
         for (i in photos.indices) {
+            coroutineContext.ensureActive()
             for (j in i + 1 until photos.size) {
                 val a = photos[i]; val b = photos[j]
                 val similar = when (settings.visualHashAlgorithm) {
@@ -329,11 +349,12 @@ class PhotoAnalyzer @Inject constructor(
             }
     }
 
-    private fun computeGroupSimilarity(photos: List<Photo>, settings: ScanSettings): Float {
+    private suspend fun computeGroupSimilarity(photos: List<Photo>, settings: ScanSettings): Float {
         if (photos.size < 2) return 1f
         var totalSim = 0f
         var count = 0
         for (i in photos.indices) {
+            coroutineContext.ensureActive()
             for (j in i + 1 until photos.size) {
                 val sim = when (settings.visualHashAlgorithm) {
                     HashAlgorithm.PHASH -> {

@@ -5,7 +5,8 @@ import com.photoclarity.ai.core.analysis.QualityScorer
 import com.photoclarity.ai.domain.model.DuplicateGroup
 import com.photoclarity.ai.domain.repository.PhotoRepository
 import com.photoclarity.ai.ui.results.ResultsViewModel
-import com.photoclarity.ai.ui.scan.ScanResultHolder
+import com.photoclarity.ai.testing.MemorySessionRepository
+import com.photoclarity.ai.core.session.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -20,12 +21,13 @@ class ResultsCharacterizationTest {
     private lateinit var stats: FakeSettingsRepository
     private lateinit var vm: ResultsViewModel
     private lateinit var original: DuplicateGroup
+    private lateinit var sessions: MemorySessionRepository
+    private fun model() = ResultsViewModel(RemovalCoordinator(repo, stats, QualityScorer(), sessions, null, OperationGate(), SessionClock(), main.runtime()))
     @Before fun setup() {
-        original = group(); ScanResultHolder.groups = listOf(original)
+        original = group(); sessions = MemorySessionRepository(listOf(original))
         repo = FakePhotoRepository(); stats = FakeSettingsRepository()
-        vm = ResultsViewModel(repo, stats, QualityScorer())
+        vm = model()
     }
-    @After fun clear() { ScanResultHolder.groups = emptyList() }
     private fun select(vararg ids: Long) = ids.forEach { vm.togglePhotoSelection(it, true) }
     private fun start() { vm.requestDeleteConfirmation(); vm.deleteSelectedPhotos() }
     private fun uri(id: Long) = original.photos.first { it.id == id }.contentUri
@@ -35,13 +37,13 @@ class ResultsCharacterizationTest {
     @Test fun keeperCannotBeSelectedManually() { select(1); assertTrue(vm.uiState.value.selectedPhotoIds.isEmpty()) }
     @Test fun unknownPhotoCannotBeSelected() { select(999); assertTrue(vm.uiState.value.selectedPhotoIds.isEmpty()) }
     @Test fun lowQualitySuggestionsAreNeverBulkDeletionCandidates() {
-        ScanResultHolder.groups = listOf(group(DuplicateGroup.GroupType.LOW_QUALITY))
-        vm = ResultsViewModel(repo, stats, QualityScorer()); vm.smartSelectAll(); select(2)
+        sessions = MemorySessionRepository(listOf(group(DuplicateGroup.GroupType.LOW_QUALITY)))
+        vm = model(); vm.smartSelectAll(); select(2)
         assertTrue(vm.uiState.value.selectedPhotoIds.isEmpty())
     }
     @Test fun missingKeeperDisablesDeletionForGroup() {
-        ScanResultHolder.groups = listOf(original.copy(recommendedKeepId = 999))
-        vm = ResultsViewModel(repo, stats, QualityScorer()); vm.smartSelectAll()
+        sessions = MemorySessionRepository(listOf(original.copy(recommendedKeepId = 999)))
+        vm = model(); vm.smartSelectAll()
         assertTrue(vm.uiState.value.selectedPhotoIds.isEmpty())
     }
     @Test fun selectionCanBeCleared() { select(2); vm.togglePhotoSelection(2,false); assertTrue(vm.uiState.value.selectedPhotoIds.isEmpty()) }
@@ -76,7 +78,7 @@ class ResultsCharacterizationTest {
     }
     @Test fun trashApprovalRequiresUriVerificationAndDoesNotCreditFreeSpace() = runTest {
         repo.removalMode = PhotoRepository.RemovalMode.SYSTEM_TRASH
-        vm = ResultsViewModel(repo,stats,QualityScorer())
+        vm = model()
         repo.result = permission(); repo.verified = PhotoRepository.DeleteResult.Success(setOf(uri(2)),setOf(uri(3)))
         select(2,3); start(); advanceUntilIdle(); vm.onDeleteResult(true); advanceUntilIdle()
         assertEquals(listOf(1L,3L,4L),vm.uiState.value.groups.single().photos.map { it.id })

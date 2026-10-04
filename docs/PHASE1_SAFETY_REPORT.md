@@ -188,3 +188,9 @@ Kullanıcı Faz 2'yi ayrıca başlattı; önceki “Faz 2 başlatılmadı” ifa
 Faz 2'nin gerçek 2.000+1 sistem onayı testinde keeper ve kalan aday korundu, ilk 2.000 URI trash olarak doğrulandı, iptal önceki başarıyı geri almadı, alan sayacı 0 kaldı. Bu test büyük production grup UI'sinin performansını veya tüm OS/OEM davranışlarını kapatmaz. Ayrıntılar: [Faz 2 platform raporu](PHASE2_PLATFORM_REPORT.md).
 
 **Faz 1 kabul PARTIAL kalır:** API 26–30 cihaz matrisi, galeri UI üzerinden restore, OEM/izin/provider senaryoları ve landscape snackbar UX maddeleri korunur. Faz 2 çalışmalarında commit/push yapılmadı ve Faz 3'e geçilmedi.
+
+## Faz 3 state/lifecycle regresyon kaydı — 2026-10-04
+
+Kullanıcı Faz 3'ü ayrıca başlattı. Önceki fazlara geçilmedi ifadeleri tarihsel kayıt olarak korunur. Global holder yerine Room session repository ve application removal coordinator kullanılır. Frozen keeper/selection, OS consent, doğrulanmış URI reconcile ve trash != boşalan bayt kontratı değişmez. Test sınırları ortak repository/coordinator'a taşındı; mevcut assertion'lar gevşetilmedi. Kontrollü kısmi provider etkisi yeni metadata preflight'tan sonra uygulanır; preflight öncesi dış medya değişikliği artık haklı olarak STALE oluşturur.
+
+API 37 gerçek process kill sonrası tamamlanmış selection/keeper ve onaylanmış issued trash recovery kanıtları [Faz 3 raporundadır](PHASE3_STATE_REPORT.md). Bunlar gerçek API 26–29 permanent delete process-kill, API 30 minimum trash, galeri UI restore, OEM/izin/provider matrisi veya landscape snackbar UX kabulünü kapatmaz. **Faz 1 genel kabul PARTIAL kalır.** Faz 3'te commit/push veya Faz 4 çalışması yapılmadı.

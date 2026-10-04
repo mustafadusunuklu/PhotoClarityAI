@@ -21,7 +21,10 @@ import androidx.compose.ui.unit.dp
 import com.photoclarity.ai.domain.model.DuplicateGroup
 import com.photoclarity.ai.ui.components.BottomNavBar
 import com.photoclarity.ai.ui.navigation.Screen
-import com.photoclarity.ai.ui.scan.ScanResultHolder
+import com.photoclarity.ai.ui.session.SessionViewModel
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.getValue
 import com.photoclarity.ai.ui.theme.GradientEnd
 import com.photoclarity.ai.ui.theme.GradientStart
 import com.photoclarity.ai.ui.theme.Secondary
@@ -32,9 +35,11 @@ fun PhotosScreen(
     onOpenDrawer: () -> Unit = {},
     onStartScan: () -> Unit,
     onOpenResults: () -> Unit,
-    onNavigate: (String) -> Unit = {}
+    onNavigate: (String) -> Unit = {},
+    viewModel: SessionViewModel = hiltViewModel()
 ) {
-    val groups        = ScanResultHolder.groups
+    val sessionState by viewModel.state.collectAsStateWithLifecycle()
+    val groups = sessionState.visibleGroups
     val hasScanResults = groups.isNotEmpty()
 
     Scaffold(
@@ -122,7 +127,7 @@ fun PhotosScreen(
                     )
                     Text(
                         text  = if (hasScanResults)
-                                    "${groups.sumOf { it.photoCount }} fotoğraf analiz edildi, ${groups.size} grup bulundu"
+                                    "${sessionState.session?.attempted ?: 0} fotoğraf analiz edildi; ${groups.size} güncel grup"
                                 else
                                     "Galerinizi tarayarak yinelenen ve bulanık fotoğrafları keşfedin.",
                         style = MaterialTheme.typography.bodyMedium,

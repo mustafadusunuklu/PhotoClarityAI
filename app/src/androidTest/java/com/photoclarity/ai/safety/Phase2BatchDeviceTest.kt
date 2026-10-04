@@ -29,7 +29,12 @@ import com.photoclarity.ai.domain.model.DuplicateGroup
 import com.photoclarity.ai.domain.model.ScanSettings
 import com.photoclarity.ai.domain.repository.SettingsRepository
 import com.photoclarity.ai.ui.results.ResultsViewModel
-import com.photoclarity.ai.ui.scan.ScanResultHolder
+import com.photoclarity.ai.testing.MemorySessionRepository
+import com.photoclarity.ai.core.session.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -50,7 +55,7 @@ class Phase2BatchDeviceTest {
     private val resolver get() = context.contentResolver
     private val folder = "PhotoClarityAI_Phase2_Batch_${UUID.randomUUID()}"
     private val created = mutableListOf<Uri>()
-    private val originalGroups = ScanResultHolder.groups
+    private val testScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private fun waitUntil(timeout: Long = 30000, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeout
@@ -99,13 +104,13 @@ class Phase2BatchDeviceTest {
         }
         lateinit var vm: ResultsViewModel
         activityRule.scenario.onActivity { activity ->
-            ScanResultHolder.groups = listOf(DuplicateGroup("batch-$folder", photos,
-                DuplicateGroup.GroupType.EXACT_DUPLICATE, 1f, photos.first().id, photos.drop(1).sumOf { it.sizeBytes }))
-            ScanResultHolder.error = null
-            vm = ResultsViewModel(repo, settings, QualityScorer())
+            val sessions = MemorySessionRepository(listOf(DuplicateGroup("batch-$folder", photos,
+                DuplicateGroup.GroupType.EXACT_DUPLICATE, 1f, photos.first().id, photos.drop(1).sumOf { it.sizeBytes })))
+            vm = ResultsViewModel(RemovalCoordinator(repo,settings,QualityScorer(),sessions,null,OperationGate(),SessionClock(),SessionScope(testScope)))
             activity.setContent {
                 val state by vm.uiState.collectAsStateWithLifecycle()
                 val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
+                    println("BATCH_CALLBACK result=${it.resultCode} tokenPresent=${vm.uiState.value.pendingConsentId != null} batch=${vm.uiState.value.consentBatch}")
                     vm.onDeleteResult(it.resultCode == Activity.RESULT_OK)
                 }
                 LaunchedEffect(state.pendingDeleteIntentSender) {
@@ -122,7 +127,12 @@ class Phase2BatchDeviceTest {
             vm.requestDeleteConfirmation(); vm.deleteSelectedPhotos()
         }
         systemConsent(true)
-        waitUntil(90000) { vm.uiState.value.consentBatch == 2 }
+        try {
+            waitUntil(90000) { vm.uiState.value.consentBatch == 2 || !vm.uiState.value.isLoading }
+            assertEquals("Expected second consent; error=${vm.uiState.value.error}",2,vm.uiState.value.consentBatch)
+        } finally {
+            println("BATCH_AFTER_FIRST batch=${vm.uiState.value.consentBatch} loading=${vm.uiState.value.isLoading} removed=${vm.uiState.value.lastDeletedCount} recovery=${vm.uiState.value.recoveryRequired} error=${vm.uiState.value.error}")
+        }
         systemConsent(false)
         waitUntil(30000) { !vm.uiState.value.isLoading }
         assertEquals(2000, vm.uiState.value.lastDeletedCount)
@@ -145,7 +155,7 @@ class Phase2BatchDeviceTest {
                 }
             }
         }
-        instrumentation.runOnMainSync { ScanResultHolder.groups = originalGroups; ScanResultHolder.error = null }
+        testScope.cancel()
         println("BATCH_FIXTURES_CLEANED=${created.size}")
     }
 }

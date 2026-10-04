@@ -6,6 +6,9 @@ import com.photoclarity.ai.domain.model.StorageInfo
 import kotlinx.coroutines.flow.Flow
 
 interface PhotoRepository {
+    suspend fun arePhotosCurrent(photos: List<com.photoclarity.ai.domain.model.Photo>): Boolean {
+        throw UnsupportedOperationException("Media freshness validation required")
+    }
     /**
      * Load all photos from device via MediaStore.
      * @param selectedFolders If non-empty, only photos from these bucket names are returned.
