@@ -91,7 +91,7 @@ Mevcut README'deki takım atıfları korunmuştur:
 | Mustafa Düşünüklü | Navigasyon ve ana ekranlar | [mustafadusunuklu](https://github.com/mustafadusunuklu) |
 | Mehmet Arda Öztürk | Veri katmanı / repository | [ardaoztrk2](https://github.com/ardaoztrk2) |
 | Hakan Arslan | Analiz ve hash algoritmaları | [Hakanars](https://github.com/Hakanars) |
-| Gülizar Yıldırım | UI, ekranlar ve tasarım sistemi | — |
+| Gülizar Yıldırım | UI, ekranlar ve tasarım sistemi | [gulizaryldr](https://github.com/gulizaryldr) |
 
 
 ## Faz 4 ölçek çalışması
